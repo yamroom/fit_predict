@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>CSV Plotter + PPT 匯出（學術風格＆多變數）</title>
+
+  <!-- Libraries -->
+  <!-- Plotly for charting -->
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <!-- PapaParse for CSV parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <!-- pptxgenjs bundle 3.12.0 for PPT generation -->
+  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+
+  <style>
+    /* ---------- 基本主題 ---------- */
+    :root {
+      --primary: #0f766e;
+      --border: #e5e7eb;
+      --muted: #6b7280;
+      --bg-card: #ffffff;
+      --bg-section: #fafafa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 20px;
+      font-family: "Noto Sans", "Segoe UI", Roboto, Arial, sans-serif;
+      font-size: 16px;
+      color: #111827;
+      background: #f5f5f5;
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      margin-bottom: 20px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    label.bold { font-weight: 700; }
+    input[type="file"] {
+      border: 1px dashed var(--border);
+      padding: 6px;
+      border-radius: 8px;
+      background: #fafafa;
+    }
+    select, input[type="number"] {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px 8px;
+      background: #fff;
+      font-size: 14px;
+    }
+    button {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 12px;
+      background: #0ea5e9;
+      color: #ffffff;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #ffffff;
+      color: #111827;
+    }
+    button.destructive {
+      background: #dc2626;
+      color: #ffffff;
+      border-color: #dc2626;
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .small { font-size: 12px; }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    /* Chart container */
+    #plot {
+      width: 100%;
+      max-width: 1100px;
+      height: 640px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: #fff;
+    }
+    /* Y 選項區塊，縮小字體並拉開距離 */
+    #ySelection .y-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 13px; /* 縮小 Y 欄位文字以避免擠在一起 */
+    }
+    #ySelection .y-row label {
+      margin-right: 4px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 13px;
+    }
+    #ySelection .y-row select {
+      font-size: 13px;
+    }
+    /* Fixed variables selection: value lists */
+    .fix-values {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .fix-values label {
+      display: flex;
+      align-items: center;
+      font-size: 14px;
+      gap: 4px;
+      padding: 2px 4px;
+      border-radius: 4px;
+      background: #f3f4f6;
+    }
+    /* PPT image list */
+    .img-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    .img-item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      background: #f9fafb;
+      font-size: 14px;
+    }
+    .img-item .thumb {
+      width: 100%; height: 150px; object-fit: contain;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .img-item .meta {
+      margin-top: 6px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .warn { color: #b91c1c; font-size: 12px; margin-top: 4px; }
+    .ok { color: #0f766e; font-size: 12px; margin-top: 4px; }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+
+<body>
+  <h2>CSV Plotter（多變數 thru 分析）+ PPT 匯出</h2>
+  <!-- CSV 載入與基本選項 -->
+  <div class="card">
+    <div class="row">
+      <label class="bold" for="csvFile">選擇 CSV 檔案：</label>
+      <input type="file" id="csvFile" accept=".csv" />
+    </div>
+    <!-- 變數選擇 -->
+    <div class="row" style="margin-top: 12px;">
+      <label class="bold">X 軸 (Thru)：</label>
+      <select id="xVarSelect" disabled></select>
+      <span class="badge small">前三欄將視為變數</span>
+    </div>
+    <div class="row" id="fixedVarSection" style="margin-top: 12px;"></div>
+    <!-- Y 選擇區 -->
+    <div class="row" style="margin-top: 12px;">
+      <label class="bold">Y 欄位：</label>
+      <span id="yCountInfo" class="muted small"></span>
+    </div>
+    <div id="ySelection" style="margin-top: 8px;"></div>
+    <!-- 操作按鈕 -->
+    <div class="row" style="margin-top: 12px;">
+      <label><input type="checkbox" id="logX" /> x 軸取對數</label>
+      <label><input type="checkbox" id="logY" /> y 軸取對數</label>
+      <button id="drawBtn" disabled>繪圖</button>
+      <button id="downloadBtn" class="secondary" disabled>下載圖片 (.png)</button>
+      <button id="snapshotBtn" disabled>加入此圖到 PPT 清單</button>
+    </div>
+    <div id="plot" style="margin-top: 14px;"></div>
+  </div>
+
+  <!-- PPT 匯出設定 -->
+  <div class="card">
+    <div class="row">
+      <label class="bold">PPT 佈局：</label>
+      <label>行數
+        <select id="pptRows">
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+        </select>
+      </label>
+      <label>列數
+        <select id="pptCols">
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+        </select>
+      </label>
+      <label>投影片數量
+        <input id="pptSlides" type="number" min="1" value="1" style="width: 80px;" />
+      </label>
+    </div>
+    <div class="row" style="margin-top: 8px;">
+      <button id="clearListBtn" class="secondary">清空圖片清單</button>
+      <span id="capacityInfo" class="muted small"></span>
+    </div>
+    <div id="pptImgList" class="img-list" style="margin-top: 12px;"></div>
+    <div class="row" style="margin-top: 12px;">
+      <button id="downloadPptBtn">下載 PPT</button>
+    </div>
+  </div>
+
+  <script>
+    // ------------- 全域狀態 -------------
+    let rawRows = [];
+    let variableCols = [];   // names of first three columns
+    let numericCols = [];    // names of numeric columns (Y candidates)
+    let xVar = null;         // selected X variable
+    let ySelections = [];    // selected Y columns
+    let yStyles = {};        // {yCol: 'lines' | 'markers'}
+    let pptImages = [];      // { dataUrl, name }
+    let pptAssigns = [];     // { slide, row, col }
+
+    // 常見學術論文色板：tab10 擴增版
+    const colorPalette = [
+      '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+      '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+      '#393b79', '#637939', '#8c6d31', '#843c39', '#7b4173',
+      '#3182bd', '#e6550d', '#31a354', '#756bb1', '#636363'
+    ];
+
+    // ---------- 基本工具 ----------
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+    function isFiniteNumber(v) {
+      if (v === null || v === undefined || v === '') return false;
+      const n = Number(v);
+      return Number.isFinite(n);
+    }
+    function detectNumericCols(rows, vars) {
+      if (!rows.length) return [];
+      const keys = Object.keys(rows[0]);
+      return keys.filter(k => !vars.includes(k) && rows.every(r => {
+        const val = r[k];
+        // allow percentage strings like "9.84%"; remove % and test
+        const str = (typeof val === 'string' && val.trim().endsWith('%')) ? val.trim().slice(0, -1) : val;
+        return str === '' || isFiniteNumber(str);
+      }));
+    }
+    function toNumber(val) {
+      if (val === null || val === undefined || val === '') return null;
+      let s = String(val).trim();
+      if (s.endsWith('%')) s = s.slice(0, -1);
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
+    }
+    function uniqueValues(rows, colName) {
+      const set = new Set();
+      rows.forEach(r => set.add(r[colName]));
+      return Array.from(set).sort((a, b) => {
+        const na = parseFloat(a);
+        const nb = parseFloat(b);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return String(a).localeCompare(String(b));
+      });
+    }
+
+    // 建立 X 變數選擇
+    function populateXSelect() {
+      const select = $('#xVarSelect');
+      select.innerHTML = '';
+      variableCols.forEach((v) => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        select.appendChild(opt);
+      });
+      select.disabled = variableCols.length === 0;
+      if (variableCols.length) {
+        select.value = variableCols[0];
+        xVar = variableCols[0];
+      } else {
+        xVar = null;
+      }
+    }
+
+    // 建立固定變數 (兩個) 選擇介面
+    function renderFixedVarSelectors() {
+      const container = $('#fixedVarSection');
+      container.innerHTML = '';
+      if (!xVar) return;
+      const others = variableCols.filter(v => v !== xVar);
+      others.forEach((varName) => {
+        const div = document.createElement('div');
+        div.className = 'fix-block';
+        const label = document.createElement('label');
+        label.className = 'bold';
+        label.textContent = `固定 ${varName}：`;
+        div.appendChild(label);
+        // 全選按鈕：一次勾選所有值
+        const selectAllBtn = document.createElement('button');
+        selectAllBtn.textContent = '全選';
+        selectAllBtn.className = 'secondary small';
+        selectAllBtn.style.marginLeft = '8px';
+        selectAllBtn.addEventListener('click', () => {
+          // 勾選此變數底下的所有值
+          valueContainer.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+            chk.checked = true;
+          });
+          updateButtonStates();
+        });
+        div.appendChild(selectAllBtn);
+        const vals = uniqueValues(rawRows, varName);
+        const valueContainer = document.createElement('div');
+        valueContainer.className = 'fix-values';
+        vals.forEach(v => {
+          const id = `${varName}_${String(v).replace(/\W+/g, '_')}`;
+          const wrapper = document.createElement('label');
+          const chk = document.createElement('input');
+          chk.type = 'checkbox';
+          chk.value = v;
+          chk.dataset.var = varName;
+          chk.className = 'fix-val';
+          chk.id = id;
+          wrapper.appendChild(chk);
+          const txt = document.createElement('span');
+          txt.textContent = v;
+          wrapper.appendChild(txt);
+          valueContainer.appendChild(wrapper);
+        });
+        div.appendChild(valueContainer);
+        container.appendChild(div);
+      });
+    }
+
+    // 建立 Y 欄位清單及樣式選擇
+    function renderYSelection() {
+      const container = $('#ySelection');
+      container.innerHTML = '';
+      ySelections = [];
+      yStyles = {};
+      numericCols.forEach(col => {
+        const row = document.createElement('div');
+        row.className = 'y-row';
+        const lbl = document.createElement('label');
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.className = 'y-item';
+        chk.dataset.col = col;
+        lbl.appendChild(chk);
+        const txt = document.createElement('span');
+        txt.textContent = col;
+        lbl.appendChild(txt);
+        row.appendChild(lbl);
+        const sel = document.createElement('select');
+        sel.className = 'y-style';
+        sel.dataset.col = col;
+        const optLine = document.createElement('option');
+        optLine.value = 'lines';
+        optLine.textContent = '線 (Line)';
+        const optCircle = document.createElement('option');
+        optCircle.value = 'markers';
+        optCircle.textContent = '圓 (Circle)';
+        sel.appendChild(optLine);
+        sel.appendChild(optCircle);
+        const lower = col.toLowerCase();
+        if (lower.includes('vth')) {
+          sel.value = 'markers';
+        } else if (lower.includes('ids')) {
+          sel.value = 'lines';
+        } else {
+          sel.value = 'lines';
+        }
+        yStyles[col] = sel.value;
+        sel.addEventListener('change', () => {
+          yStyles[col] = sel.value;
+        });
+        row.appendChild(sel);
+        container.appendChild(row);
+      });
+      $('#yCountInfo').textContent = numericCols.length ? `可選數值欄位 ${numericCols.length} 個` : '沒有可用的數值欄位';
+    }
+
+    // 更新按鈕狀態
+    function updateButtonStates() {
+      const hasY = $$('.y-item:checked').length > 0;
+      const hasData = rawRows.length > 0 && xVar != null;
+      $('#drawBtn').disabled = !(hasData && hasY);
+      $('#downloadBtn').disabled = !(hasData && hasY);
+      $('#snapshotBtn').disabled = !(hasData && hasY);
+    }
+
+    // 取得選取的固定變數組合
+    function getFixedSelections() {
+      const selections = {};
+      $$('.fix-val:checked').forEach(chk => {
+        const vName = chk.dataset.var;
+        const vVal = chk.value;
+        if (!selections[vName]) selections[vName] = new Set();
+        selections[vName].add(vVal);
+      });
+      return selections;
+    }
+    // 取得 Y 列表
+    function getYCols() {
+      return $$('.y-item:checked').map(chk => chk.dataset.col);
+    }
+
+    // 准备 traces
+    function prepareTraces() {
+      const xName = xVar;
+      const yCols = getYCols();
+      const selections = getFixedSelections();
+      const otherVars = variableCols.filter(v => v !== xName);
+      const combos = [];
+      function buildCombos(vars, index, current) {
+        if (index === vars.length) {
+          combos.push(Object.assign({}, current));
+          return;
+        }
+        const vName = vars[index];
+        const selectedVals = selections[vName];
+        if (!selectedVals || selectedVals.size === 0) {
+          const vals = uniqueValues(rawRows, vName);
+          vals.forEach(val => {
+            current[vName] = val;
+            buildCombos(vars, index + 1, current);
+          });
+        } else {
+          selectedVals.forEach(val => {
+            current[vName] = val;
+            buildCombos(vars, index + 1, current);
+          });
+        }
+      }
+      buildCombos(otherVars, 0, {});
+      combos.sort((a, b) => {
+        for (const v of otherVars) {
+          const av = a[v];
+          const bv = b[v];
+          const na = parseFloat(av);
+          const nb = parseFloat(bv);
+          if (!isNaN(na) && !isNaN(nb)) {
+            if (na !== nb) return na - nb;
+          } else {
+            const cmp = String(av).localeCompare(String(bv));
+            if (cmp !== 0) return cmp;
+          }
+        }
+        return 0;
+      });
+      const colorMap = {};
+      combos.forEach((combo, idx) => {
+        const key = otherVars.map(v => `${v}=${combo[v]}`).join(',');
+        colorMap[key] = colorPalette[idx % colorPalette.length];
+      });
+      const traces = [];
+      combos.forEach(combo => {
+        const rows = rawRows.filter(r => {
+          return otherVars.every(vName => String(r[vName]) === String(combo[vName]));
+        });
+        const key = otherVars.map(v => `${v}=${combo[v]}`).join(',');
+        const groupColor = colorMap[key];
+        yCols.forEach(yCol => {
+          const xs = [];
+          const ys = [];
+          rows.forEach(r => {
+            const xv = toNumber(r[xName]);
+            const yv = toNumber(r[yCol]);
+            if (xv != null && yv != null) {
+              xs.push(xv);
+              ys.push(yv);
+            }
+          });
+          if (xs.length === 0) return;
+          const style = yStyles[yCol] || 'lines';
+          const trace = {
+            x: xs,
+            y: ys,
+            // 改善圖例顯示：用冒號連接 Y 欄位與固定變數組合，易讀性較佳
+            name: `${yCol}: ${key}`,
+            mode: style === 'markers' ? 'markers' : 'lines',
+            line: { color: groupColor, width: 2.5 },
+            marker: {
+              color: groupColor,
+              size: 9,
+              symbol: 'circle-open',
+              line: { color: groupColor, width: 2.5 }
+            },
+            showlegend: true
+          };
+          if (style !== 'markers') {
+            trace.mode = 'lines';
+            trace.marker.opacity = 0;
+          }
+          traces.push(trace);
+        });
+      });
+      return { traces };
+    }
+
+    async function drawPlot() {
+      const yCols = getYCols();
+      if (!xVar || yCols.length === 0) {
+        alert('請選擇 X 軸與至少一個 Y 欄位');
+        return;
+      }
+      const { traces } = prepareTraces();
+      let yTitle;
+      if (yCols.length > 1) {
+        yTitle = 'Degradation';
+      } else {
+        yTitle = yCols[0];
+      }
+      const layout = {
+        xaxis: {
+          title: xVar,
+          type: $('#logX').checked ? 'log' : 'linear',
+          mirror: true,
+          ticks: 'outside',
+          showgrid: true,
+          gridcolor: '#e5e5e5',
+          gridwidth: 1,
+          zeroline: false,
+          linecolor: '#000',
+          linewidth: 1,
+          titlefont: { size: 22 },
+          tickfont: { size: 18 }
+        },
+        yaxis: {
+          title: yTitle,
+          type: $('#logY').checked ? 'log' : 'linear',
+          mirror: true,
+          ticks: 'outside',
+          showgrid: true,
+          gridcolor: '#e5e5e5',
+          gridwidth: 1,
+          zeroline: false,
+          linecolor: '#000',
+          linewidth: 1,
+          titlefont: { size: 22 },
+          tickfont: { size: 18 }
+        },
+        legend: {
+          orientation: 'v',
+          x: 1.02,
+          xanchor: 'left',
+          y: 1,
+          yanchor: 'top',
+          font: { size: 16 }
+        },
+        margin: { l: 70, r: 240, t: 20, b: 60 },
+        showlegend: true,
+        font: { size: 20 },
+        hovermode: 'closest'
+      };
+      if ($('#logX').checked) {
+        const valid = traces.every(tr => tr.x.every(x => x > 0));
+        if (!valid) {
+          alert('X 軸含非正數，無法取對數，將自動改回線性');
+          $('#logX').checked = false;
+          layout.xaxis.type = 'linear';
+        }
+      }
+      if ($('#logY').checked) {
+        const valid = traces.every(tr => tr.y.every(y => y > 0));
+        if (!valid) {
+          alert('Y 軸含非正數，無法取對數，將自動改回線性');
+          $('#logY').checked = false;
+          layout.yaxis.type = 'linear';
+        }
+      }
+      await Plotly.newPlot('plot', traces, layout, { responsive: true, displaylogo: false });
+    }
+
+    $('#downloadBtn').addEventListener('click', async () => {
+      try {
+        // Automatically redraw the plot before capturing to ensure the latest selections are reflected
+        await drawPlot();
+        await Plotly.downloadImage('plot', { format: 'png', width: 1440, height: 900, scale: 2, filename: 'plot' });
+      } catch (e) {
+        alert('下載圖片失敗：' + e);
+      }
+    });
+    $('#snapshotBtn').addEventListener('click', async () => {
+      try {
+        // Redraw the plot to capture the latest state before taking a snapshot
+        await drawPlot();
+        const nameHint = `plot_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+        const dataUrl = await Plotly.toImage('plot', { format: 'png', width: 1440, height: 900, scale: 2 });
+        pptImages.push({ dataUrl, name: nameHint });
+
+        // Assign this new image to the next available cell across all slides
+        const R = parseInt($('#pptRows').value);
+        const C = parseInt($('#pptCols').value);
+        let S = Math.max(1, parseInt($('#pptSlides').value || '1'));
+        // Automatically increase the slide count if the new image would exceed current capacity
+        const capacity = R * C * S;
+        const totalImages = pptImages.length; // after pushing but before assigning slot
+        if (totalImages > capacity) {
+          S = S + 1;
+          $('#pptSlides').value = String(S);
+        }
+        function nextAvailableSlot() {
+          // Try to find an empty slot across slides 1..S
+          for (let s = 1; s <= S; s++) {
+            const used = new Set();
+            pptAssigns.forEach(a => {
+              if (a.slide === s) used.add(`${a.row},${a.col}`);
+            });
+            for (let rr = 1; rr <= R; rr++) {
+              for (let cc = 1; cc <= C; cc++) {
+                const key = `${rr},${cc}`;
+                if (!used.has(key)) return { slide: s, row: rr, col: cc };
+              }
+            }
+          }
+          // If all cells are used, default to the first cell on the last slide
+          return { slide: S, row: 1, col: 1 };
+        }
+        const slot = nextAvailableSlot();
+        pptAssigns.push({ slide: slot.slide, row: slot.row, col: slot.col });
+        renderPptList();
+      } catch (e) {
+        alert('擷取圖像失敗：' + e);
+      }
+    });
+    $('#clearListBtn').addEventListener('click', () => {
+      if (!pptImages.length) return;
+      if (!confirm('確定要清空 PPT 圖片清單？')) return;
+      pptImages = [];
+      pptAssigns = [];
+      renderPptList();
+    });
+    $('#pptRows').addEventListener('change', () => { renderPptList(); });
+    $('#pptCols').addEventListener('change', () => { renderPptList(); });
+    $('#pptSlides').addEventListener('change', () => {
+      if (!$('#pptSlides').value || parseInt($('#pptSlides').value) < 1) {
+        $('#pptSlides').value = 1;
+      }
+      renderPptList();
+    });
+    $('#downloadPptBtn').addEventListener('click', async () => {
+      if (pptImages.length === 0) {
+        alert('請先加入至少一張圖');
+        return;
+      }
+      const R = parseInt($('#pptRows').value);
+      const C = parseInt($('#pptCols').value);
+      const S = Math.max(1, parseInt($('#pptSlides').value || '1'));
+      const pptx = new PptxGenJS();
+      /*
+       * 使用百分比座標直接切分格子：每張投影片按照 R × C 等分，
+       * 每張圖均勻填滿格子（不保留原圖片長寬比例），避免重疊並鋪滿整個頁面。
+       */
+      const cellWpct = 100 / C;
+      const cellHpct = 100 / R;
+      const slides = [];
+      for (let i = 1; i <= S; i++) slides.push(pptx.addSlide());
+      pptAssigns.forEach((a, idx) => {
+        const img = pptImages[idx];
+        if (!img) return;
+        // 確保 slide、row、col 在合理範圍內
+        const slideIndex = Math.min(Math.max(1, a.slide), S) - 1;
+        const r = Math.min(a.row, R);
+        const c = Math.min(a.col, C);
+        const xPct = (c - 1) * cellWpct;
+        const yPct = (r - 1) * cellHpct;
+        slides[slideIndex].addImage({
+          data: img.dataUrl,
+          x: `${xPct}%`,
+          y: `${yPct}%`,
+          w: `${cellWpct}%`,
+          h: `${cellHpct}%`
+        });
+      });
+      await pptx.writeFile({ fileName: 'plots_grid.pptx' });
+    });
+    function renderPptList() {
+      const list = $('#pptImgList');
+      list.innerHTML = '';
+      const R = parseInt($('#pptRows').value);
+      const C = parseInt($('#pptCols').value);
+      const S = Math.max(1, parseInt($('#pptSlides').value || '1'));
+      const usedCount = {};
+      pptAssigns.forEach(a => {
+        const key = `${a.slide}|${a.row}|${a.col}`;
+        usedCount[key] = (usedCount[key] || 0) + 1;
+      });
+      pptImages.forEach((img, idx) => {
+        const a = pptAssigns[idx] || { slide: 1, row: 1, col: 1 };
+        const item = document.createElement('div');
+        item.className = 'img-item';
+        const thumb = document.createElement('img');
+        thumb.className = 'thumb';
+        thumb.src = img.dataUrl;
+        thumb.alt = img.name;
+        item.appendChild(thumb);
+        const title = document.createElement('div');
+        title.className = 'muted small';
+        title.textContent = img.name;
+        item.appendChild(title);
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const sSel = document.createElement('select');
+        for (let i=1; i<=S; i++) {
+          const op = document.createElement('option');
+          op.value = i;
+          op.textContent = `第 ${i} 張`;
+          sSel.appendChild(op);
+        }
+        sSel.value = String(a.slide);
+        sSel.addEventListener('change', () => {
+          pptAssigns[idx].slide = parseInt(sSel.value);
+          renderPptList();
+        });
+        meta.appendChild(sSel);
+        const cellSel = document.createElement('select');
+        for (let r=1; r<=R; r++) {
+          for (let c=1; c<=C; c++) {
+            const op = document.createElement('option');
+            op.value = `${r},${c}`;
+            op.textContent = `${r}行${c}列`;
+            cellSel.appendChild(op);
+          }
+        }
+        cellSel.value = `${a.row},${a.col}`;
+        cellSel.addEventListener('change', () => {
+          const [rr, cc] = cellSel.value.split(',').map(x => parseInt(x));
+          pptAssigns[idx].row = rr;
+          pptAssigns[idx].col = cc;
+          renderPptList();
+        });
+        meta.appendChild(cellSel);
+        const rm = document.createElement('button');
+        rm.textContent = '移除';
+        rm.className = 'destructive';
+        rm.addEventListener('click', () => {
+          pptImages.splice(idx, 1);
+          pptAssigns.splice(idx, 1);
+          renderPptList();
+        });
+        meta.appendChild(rm);
+        item.appendChild(meta);
+        const key = `${a.slide}|${a.row}|${a.col}`;
+        const count = usedCount[key] || 0;
+        const hint = document.createElement('div');
+        hint.className = count > 1 ? 'warn' : 'ok';
+        hint.textContent = count > 1 ? `⚠ 位置重疊 (${count} 張)` : '✓ 位置正常';
+        item.appendChild(hint);
+        list.appendChild(item);
+      });
+      const capacity = R * C * S;
+      $('#capacityInfo').textContent = `目前圖數：${pptImages.length}，容量：${R}×${C}×${S} = ${capacity}`;
+    }
+
+    // 初始狀態
+    updateButtonStates();
+    renderPptList();
+
+    // CSV 載入事件
+    $('#csvFile').addEventListener('change', e => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: res => {
+          rawRows = res.data;
+          if (!rawRows.length) {
+            alert('CSV 無有效資料');
+            return;
+          }
+          const firstRow = rawRows[0];
+          variableCols = Object.keys(firstRow).slice(0, 3);
+          numericCols = detectNumericCols(rawRows, variableCols);
+          populateXSelect();
+          renderFixedVarSelectors();
+          renderYSelection();
+          updateButtonStates();
+        },
+        error: err => {
+          alert('CSV 解析失敗：' + err);
+        }
+      });
+    });
+    // X 軸切換
+    $('#xVarSelect').addEventListener('change', e => {
+      xVar = e.target.value;
+      renderFixedVarSelectors();
+      updateButtonStates();
+    });
+    // 監聽固定變數和 Y 勾選
+    document.addEventListener('change', e => {
+      if (e.target && e.target.classList.contains('fix-val')) {
+        updateButtonStates();
+      }
+      if (e.target && e.target.classList.contains('y-item')) {
+        updateButtonStates();
+      }
+    });
+    $('#drawBtn').addEventListener('click', drawPlot);
+    $('#logX').addEventListener('change', () => {});
+    $('#logY').addEventListener('change', () => {});
+  </script>
+</body>
+</html>
