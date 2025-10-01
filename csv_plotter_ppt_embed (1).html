@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CSV Plotter (Flexible X Axis) + 圖片嵌入 PPT</title>
+
+  <!-- 既有：Plotly / PapaParse（若你已有對應繪圖程式碼即可沿用） -->
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+  <!-- 新增 / 沿用：PptxGenJS 3.11.0 -->
+  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.11.0/dist/pptxgen.min.js"></script>
+
+  <style>
+    :root {
+      --accent: #0f62fe;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --bg: #fafafa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+        "Noto Sans TC", "Microsoft JhengHei", Arial, "PingFang TC", sans-serif;
+      margin: 24px;
+      color: #111827;
+      background: white;
+    }
+    h2 { margin: 0 0 12px; }
+    .section {
+      margin: 18px 0 22px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+    }
+    .row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .label {
+      font-weight: 600;
+      margin-right: 8px;
+    }
+    .hint { color: var(--muted); font-size: 12px; }
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: box-shadow .18s ease, transform .06s ease;
+    }
+    .btn:hover { box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 10px;
+    }
+    .img-row {
+      display: grid;
+      grid-template-columns: 84px 1fr;
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      background: var(--bg);
+    }
+    .img-preview {
+      width: 84px; height: 84px;
+      object-fit: contain;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .img-meta {
+      display: grid;
+      gap: 6px;
+    }
+    .img-meta .name { font-size: 14px; font-weight: 600; }
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    select, input[type="number"], input[type="text"] {
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      min-width: 84px;
+      background: #fff;
+    }
+    input[type="checkbox"] {
+      transform: translateY(1px);
+    }
+    #plot { width: 900px; height: 600px; }
+    .divider { height: 1px; background: var(--border); margin: 18px 0; border: none; }
+    .note { font-size: 12px; color: var(--muted); }
+    .tag {
+      font-size: 12px; padding: 2px 6px; border-radius: 6px; background: #eef2ff; color: #3730a3;
+      border: 1px solid #e0e7ff;
+    }
+    .kvs {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, auto)); gap: 10px; align-items: center;
+    }
+    .kvs > label { font-size: 12px; color: #374151; }
+  </style>
+</head>
+<body>
+  <h2>CSV Plotter (Flexible X Axis)</h2>
+
+  <!-- 既有繪圖區（如你已有對應 JS，可沿用；本檔不更動你的繪圖流程） -->
+  <div class="section">
+    <div class="row">
+      <span class="label">選擇 CSV 檔案：</span>
+      <input type="file" id="csvFile" accept=".csv" />
+      <span class="hint">（此區維持原本行為；以下新增為「圖片 → PPT」功能）</span>
+    </div>
+  </div>
+  <div class="section" id="xAxisSection"></div>
+  <div class="section" id="fixedSection1"></div>
+  <div class="section" id="fixedSection2"></div>
+  <div class="section" id="itemCheckboxes"></div>
+  <div class="section">
+    <div class="row">
+      <label><input type="checkbox" id="logX" /> x 軸取對數</label>
+      <label><input type="checkbox" id="logY" /> y 軸取對數</label>
+      <button class="btn" id="drawBtn">繪圖</button>
+      <button class="btn" id="downloadBtn">下載圖片 (.png)</button>
+    </div>
+    <div id="plot" style="margin-top: 12px;"></div>
+  </div>
+
+  <!-- 新增：圖片嵌入 PPT 區塊 -->
+  <div class="section">
+    <div class="row" style="justify-content: space-between; align-items: flex-end;">
+      <div class="row" style="gap: 10px;">
+        <span class="label">選擇要嵌入 PPT 的圖片：</span>
+        <input type="file" id="pptImages" accept="image/*" multiple />
+      </div>
+      <span class="tag">功能：嵌入圖片 → 選擇格數 → 選位置 → 下載 PPT</span>
+    </div>
+
+    <hr class="divider" />
+
+    <div class="kvs">
+      <label>行數（Rows）：
+        <select id="pptRows">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+        </select>
+      </label>
+
+      <label>列數（Cols）：
+        <select id="pptCols">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+        </select>
+      </label>
+
+      <label>左右邊距（in）：
+        <input type="number" id="marginX" step="0.05" min="0" value="0.3" />
+      </label>
+
+      <label>上下邊距（in）：
+        <input type="number" id="marginY" step="0.05" min="0" value="0.3" />
+      </label>
+
+      <label>水平間距（in）：
+        <input type="number" id="gapX" step="0.05" min="0" value="0.1" />
+      </label>
+
+      <label>垂直間距（in）：
+        <input type="number" id="gapY" step="0.05" min="0" value="0.1" />
+      </label>
+
+      <label style="display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" id="enforceUnique" checked />
+        防止同一格重複（自動改放下一個空格）
+      </label>
+
+      <label style="display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" id="paginateOverflow" checked />
+        超過一頁自動新增投影片
+      </label>
+
+      <label>輸出檔名：
+        <input type="text" id="pptFileName" value="images_grid.pptx" />
+      </label>
+    </div>
+
+    <div style="margin-top: 12px;" class="note">
+      等比縮放：圖片將以「不變形」方式置中排入格子；若格子比例與圖片不同，將留白，避免拉伸失真。
+    </div>
+
+    <hr class="divider" />
+
+    <div id="pptImgPreview" class="grid"></div>
+
+    <div class="row" style="margin-top: 12px;">
+      <button class="btn" id="autoAssignBtn">自動依序填入位置（列優先）</button>
+      <button class="btn primary" id="downloadPptBtn">下載 PPT</button>
+    </div>
+  </div>
+
+  <script>
+    // ===========================
+    // 圖片 → PPT：狀態與工具
+    // ===========================
+    let pptImageMetas = []; // [{file, dataUrl, w, h}]
+    let pptImagePositions = {}; // {idx: {row, col}}；未設定則代表「自動」
+
+    const $ = (id) => document.getElementById(id);
+
+    function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+
+    function posKey(r, c) { return `${r},${c}`; }
+
+    function rowMajorCells(rows, cols) {
+      const arr = [];
+      for (let r = 1; r <= rows; r++) {
+        for (let c = 1; c <= cols; c++) arr.push({ r, c });
+      }
+      return arr;
+    }
+
+    function fileToDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = (e) => resolve(e.target.result);
+        fr.onerror = reject;
+        fr.readAsDataURL(file);
+      });
+    }
+
+    async function readImageMeta(file) {
+      const dataUrl = await fileToDataURL(file);
+      const img = new Image();
+      img.src = dataUrl;
+      await img.decode();
+      return { file, dataUrl, w: img.naturalWidth, h: img.naturalHeight };
+    }
+
+    function calcContainFit(cellW, cellH, imgW, imgH) {
+      const arImg = imgW / imgH;
+      const arCell = cellW / cellH;
+      let w, h;
+      if (arImg >= arCell) {
+        // 以寬度貼齊
+        w = cellW;
+        h = w / arImg;
+      } else {
+        // 以高度貼齊
+        h = cellH;
+        w = h * arImg;
+      }
+      const dx = (cellW - w) / 2;
+      const dy = (cellH - h) / 2;
+      return { w, h, dx, dy };
+    }
+
+    // ===========================
+    // 預覽與位置選擇
+    // ===========================
+    function renderPptImgPreview() {
+      const preview = $("pptImgPreview");
+      preview.innerHTML = "";
+
+      const rows = parseInt($("pptRows").value, 10);
+      const cols = parseInt($("pptCols").value, 10);
+
+      pptImageMetas.forEach((meta, idx) => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "img-row";
+
+        const thumb = document.createElement("img");
+        thumb.className = "img-preview";
+        thumb.src = meta.dataUrl;
+
+        const metaCol = document.createElement("div");
+        metaCol.className = "img-meta";
+
+        const name = document.createElement("div");
+        name.className = "name";
+        name.textContent = meta.file.name;
+
+        const info = document.createElement("div");
+        info.className = "note";
+        info.textContent = `來源尺寸：${meta.w}×${meta.h}px`;
+
+        // 位置下拉：新增一個「自動」選項
+        const controls = document.createElement("div");
+        controls.className = "controls";
+
+        const posLabel = document.createElement("label");
+        posLabel.textContent = "位置：";
+
+        const sel = document.createElement("select");
+        sel.className = "img-pos-select";
+        sel.dataset.idx = String(idx);
+
+        const optAuto = document.createElement("option");
+        optAuto.value = "";
+        optAuto.textContent = "自動";
+        sel.appendChild(optAuto);
+
+        for (let r = 1; r <= rows; r++) {
+          for (let c = 1; c <= cols; c++) {
+            const opt = document.createElement("option");
+            opt.value = `${r},${c}`;
+            opt.textContent = `${r}行${c}列`;
+            sel.appendChild(opt);
+          }
+        }
+
+        // 將既有選擇（若有）帶回 UI
+        if (pptImagePositions[idx]) {
+          const { row, col } = pptImagePositions[idx];
+          const value = `${clamp(row,1,rows)},${clamp(col,1,cols)}`;
+          sel.value = value;
+        } else {
+          sel.value = ""; // 自動
+        }
+
+        sel.addEventListener("change", (e) => {
+          const v = e.target.value;
+          if (!v) {
+            delete pptImagePositions[idx];
+          } else {
+            const [row, col] = v.split(",").map((x) => parseInt(x, 10));
+            pptImagePositions[idx] = { row, col };
+          }
+        });
+
+        controls.appendChild(posLabel);
+        controls.appendChild(sel);
+
+        metaCol.appendChild(name);
+        metaCol.appendChild(info);
+        metaCol.appendChild(controls);
+
+        wrapper.appendChild(thumb);
+        wrapper.appendChild(metaCol);
+        preview.appendChild(wrapper);
+      });
+    }
+
+    // ⛳️ 自動依序填入（列優先）
+    function autoAssignPositions() {
+      const rows = parseInt($("pptRows").value, 10);
+      const cols = parseInt($("pptCols").value, 10);
+      const cells = rowMajorCells(rows, cols);
+      let cursor = 0;
+      pptImagePositions = {}; // 直接覆寫為自動依序
+      for (let i = 0; i < pptImageMetas.length && cursor < cells.length; i++, cursor++) {
+        pptImagePositions[i] = { row: cells[cursor].r, col: cells[cursor].c };
+      }
+      renderPptImgPreview();
+    }
+
+    // ===========================
+    // 核心：產生 PPT
+    // ===========================
+    async function buildAndDownloadPpt() {
+      if (pptImageMetas.length === 0) {
+        alert("請先選擇要嵌入的圖片！");
+        return;
+      }
+
+      const rows = parseInt($("pptRows").value, 10);
+      const cols = parseInt($("pptCols").value, 10);
+      const marginX = Math.max(0, Number($("marginX").value || 0));
+      const marginY = Math.max(0, Number($("marginY").value || 0));
+      const gapX = Math.max(0, Number($("gapX").value || 0));
+      const gapY = Math.max(0, Number($("gapY").value || 0));
+      const enforceUnique = $("enforceUnique").checked;
+      const paginateOverflow = $("paginateOverflow").checked;
+      const fileName = ($("pptFileName").value || "images_grid.pptx").trim();
+
+      // 初始化簡報
+      const pptx = new PptxGenJS();
+      // 以預設 10 x 5.625 in 為例（pptx.width/height 會依佈景而定）
+      const slideW = pptx.width;
+      const slideH = pptx.height;
+
+      // 計算每格可用大小（含間距與邊距）
+      const totalW = slideW - marginX * 2 - gapX * (cols - 1);
+      const totalH = slideH - marginY * 2 - gapY * (rows - 1);
+      if (totalW <= 0 || totalH <= 0) {
+        alert("邊距或間距過大，導致可用空間為 0，請調整。");
+        return;
+      }
+      const cellW = totalW / cols;
+      const cellH = totalH / rows;
+
+      // 第一頁（有指定位置者先排）
+      let slide = pptx.addSlide();
+      const used = new Set(); // 已佔用的 cell key on current slide
+      const maxPerSlide = rows * cols;
+      let placedOnThisSlide = 0;
+      const pendingAuto = []; // 要自動排入本頁的索引
+      const leftovers = [];   // 超量要塞下一頁的索引
+      const warnings = [];
+
+      // 先處理「有選位置」的（限制唯一格子時避免碰撞）
+      for (let i = 0; i < pptImageMetas.length; i++) {
+        const pos = pptImagePositions[i];
+        if (!pos) { pendingAuto.push(i); continue; }
+
+        const r = clamp(pos.row, 1, rows);
+        const c = clamp(pos.col, 1, cols);
+        const key = posKey(r, c);
+
+        if (placedOnThisSlide >= maxPerSlide) {
+          leftovers.push(i);
+          continue;
+        }
+
+        if (enforceUnique && used.has(key)) {
+          warnings.push(`「${pptImageMetas[i].file.name}」指定 ${r}行${c}列 已被占用，改為自動安置。`);
+          pendingAuto.push(i);
+          continue;
+        }
+
+        // 佔位並實際放圖
+        used.add(key);
+        placeOneImageOnSlide(slide, pptImageMetas[i], r, c, cellW, cellH, marginX, marginY, gapX, gapY);
+        placedOnThisSlide++;
+      }
+
+      // 再把「自動」的補滿當頁剩餘格
+      const cells = rowMajorCells(rows, cols);
+      let autoCursor = 0;
+      for (const i of pendingAuto) {
+        if (placedOnThisSlide >= maxPerSlide) { leftovers.push(i); continue; }
+        // 找第一個未用格
+        while (autoCursor < cells.length && used.has(posKey(cells[autoCursor].r, cells[autoCursor].c))) {
+          autoCursor++;
+        }
+        if (autoCursor >= cells.length) { leftovers.push(i); continue; }
+        const { r, c } = cells[autoCursor];
+        used.add(posKey(r, c));
+        placeOneImageOnSlide(slide, pptImageMetas[i], r, c, cellW, cellH, marginX, marginY, gapX, gapY);
+        placedOnThisSlide++;
+        autoCursor++;
+      }
+
+      // 超出本頁者：若允許自動翻頁，則連續新增頁面，列優先自動填
+      if (leftovers.length > 0) {
+        if (!paginateOverflow) {
+          warnings.push(`共有 ${leftovers.length} 張圖片超過本頁可容納格數（${rows}×${cols}）。已略過。`);
+        } else {
+          let queue = leftovers.slice();
+          while (queue.length) {
+            slide = pptx.addSlide();
+            const used2 = new Set();
+            let placed = 0;
+            const cells2 = rowMajorCells(rows, cols);
+            for (let k = 0; k < cells2.length && queue.length; k++) {
+              const idx = queue.shift();
+              const { r, c } = cells2[k];
+              used2.add(posKey(r, c));
+              placeOneImageOnSlide(slide, pptImageMetas[idx], r, c, cellW, cellH, marginX, marginY, gapX, gapY);
+              placed++;
+            }
+            if (queue.length && placed === 0) break; // 安全保險
+          }
+        }
+      }
+
+      if (warnings.length) {
+        console.warn("[PPT 佈局警告]", warnings);
+        alert("注意：\\n" + warnings.join("\\n"));
+      }
+
+      await pptx.writeFile({ fileName });
+    }
+
+    function placeOneImageOnSlide(slide, meta, r, c, cellW, cellH, marginX, marginY, gapX, gapY) {
+      const xCell = marginX + (c - 1) * (cellW + gapX);
+      const yCell = marginY + (r - 1) * (cellH + gapY);
+      const fit = calcContainFit(cellW, cellH, meta.w, meta.h);
+      slide.addImage({
+        data: meta.dataUrl,
+        x: xCell + fit.dx,
+        y: yCell + fit.dy,
+        w: fit.w,
+        h: fit.h
+      });
+    }
+
+    // ===========================
+    // 綁定事件
+    // ===========================
+    $("pptImages").addEventListener("change", async (e) => {
+      const files = Array.from(e.target.files || []);
+      // 讀取並建立 meta
+      pptImageMetas = [];
+      for (const f of files) {
+        const meta = await readImageMeta(f);
+        pptImageMetas.push(meta);
+      }
+      // 重置已選位置（避免前後格數不同造成越界）
+      pptImagePositions = {};
+      renderPptImgPreview();
+    });
+
+    $("pptRows").addEventListener("change", renderPptImgPreview);
+    $("pptCols").addEventListener("change", renderPptImgPreview);
+
+    $("autoAssignBtn").addEventListener("click", autoAssignPositions);
+    $("downloadPptBtn").addEventListener("click", buildAndDownloadPpt);
+
+    // ===========================
+    // （選填）你原本 CSV/Plotly 的 JS 可放回來
+    // 本檔沒有改動既有繪圖流程，避免干擾。
+    // ===========================
+  </script>
+</body>
+</html>
