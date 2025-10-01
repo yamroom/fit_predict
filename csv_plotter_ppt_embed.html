@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>CSV Plotter + 圖片嵌入 PPT</title>
+  <!-- Libs -->
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.11.0/dist/pptxgen.min.js"></script>
+
+  <style>
+    body { font-family: 'Times New Roman', serif; margin: 28px; line-height: 1.35; }
+    h2 { margin: 0 0 16px; }
+    .section { margin: 18px 0; }
+    .row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+    label.bold { font-weight: bold; }
+    #plot { width: 960px; height: 600px; border: 1px solid #ddd; }
+    .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 14px; }
+    .btn { padding: 8px 12px; cursor: pointer; border: 1px solid #999; background: #fafafa; border-radius: 6px; }
+    .btn.primary { background: #0a66c2; color: #fff; border-color: #0a66c2; }
+    .btn.ghost { background: #fff; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .subtle { color: #666; font-size: 13px; }
+    .inline { display: inline-block; }
+    .sep { height: 1px; background: #eee; margin: 22px 0; }
+    .img-preview { width: 80px; height: 80px; object-fit: contain; border: 1px solid #ccc; background: #fff; }
+    .img-row { display: grid; grid-template-columns: 90px 1fr auto; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px dashed #eee; }
+    .grid-ctl { display: inline-flex; align-items: center; gap: 6px; }
+    .kvs { display: inline-grid; grid-auto-flow: column; gap: 8px; align-items: center; }
+    select, input[type="number"] { padding: 6px; border: 1px solid #bbb; border-radius: 6px; }
+    .warn { color: #b54708; background: #fff7ed; border: 1px solid #fed7aa; padding: 8px 10px; border-radius: 8px; }
+    .ok { color: #166534; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 8px 10px; border-radius: 8px; }
+    .note { color: #444; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h2>CSV Plotter（可選 X 軸）＋ 圖片嵌入 PPT</h2>
+
+  <!-- CSV 區 -->
+  <div class="section">
+    <div class="row">
+      <label class="bold">選擇 CSV 檔案：</label>
+      <input type="file" id="csvFile" accept=".csv" />
+      <span class="subtle">（需含表頭列；自動偵測數值欄位）</span>
+    </div>
+  </div>
+
+  <div class="section" id="xAxisSection" style="display:none;">
+    <div class="row">
+      <label class="bold">X 軸欄位：</label>
+      <select id="xField"></select>
+      <label><input type="checkbox" id="logX" /> x 軸取對數</label>
+      <label><input type="checkbox" id="logY" /> y 軸取對數</label>
+      <button class="btn" id="drawBtn">繪圖</button>
+      <button class="btn" id="downloadBtn" disabled>下載圖片（.png）</button>
+      <span id="plotStatus" class="subtle"></span>
+    </div>
+  </div>
+
+  <div class="section" id="yFieldsSection" style="display:none;">
+    <div class="row">
+      <label class="bold">Y 軸欄位（可複選）：</label>
+      <button class="btn ghost" id="selectAllY">全選</button>
+      <button class="btn ghost" id="clearAllY">全不選</button>
+    </div>
+    <div class="checkbox-grid" id="yFields"></div>
+  </div>
+
+  <div id="plot" class="section"></div>
+
+  <div class="sep"></div>
+
+  <!-- 圖片嵌入 PPT 區 -->
+  <div class="section">
+    <div class="row">
+      <label class="bold">選擇要嵌入 PPT 的圖片：</label>
+      <input type="file" id="pptImages" accept="image/*" multiple />
+      <span class="subtle">可多選；支援 PNG/JPG/SVG（嵌入時以點陣方式處理）</span>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <div class="kvs">
+        <span>行數：</span>
+        <select id="pptRows">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+        </select>
+      </div>
+      <div class="kvs">
+        <span>列數：</span>
+        <select id="pptCols">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+        </select>
+      </div>
+      <label class="grid-ctl"><input type="checkbox" id="allowOverlap" /> 允許重疊</label>
+      <button class="btn ghost" id="autoFillBtn">自動依序填滿</button>
+    </div>
+
+    <div id="capacityHint" class="section note"></div>
+
+    <div id="pptImgPreview" class="section"></div>
+
+    <div class="row">
+      <button class="btn primary" id="downloadPptBtn" disabled>下載 PPT</button>
+      <span class="subtle">（若圖片數量超過「行×列」，會自動分頁。）</span>
+    </div>
+  </div>
+
+  <script>
+    /***************
+     * 工具函式區
+     ***************/
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+    const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);
+
+    function toBase64(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = (e) => resolve(e.target.result);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+    }
+
+    function uniq(arr) { return Array.from(new Set(arr)); }
+
+    /***********************
+     * CSV / Plotly 區塊
+     ***********************/
+    let csvRows = [];          // 以物件陣列存放
+    let csvFields = [];        // 欄位名稱
+    let numericFields = [];    // 偵測為數值欄位
+    let currentPlotOk = false;
+
+    $('#csvFile').addEventListener('change', (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+
+      Papa.parse(f, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: (res) => {
+          csvRows = res.data || [];
+          csvFields = res.meta?.fields || [];
+          // 偵測數值欄位（只要有 >=70% 為數值就視為數值欄位）
+          const score = {};
+          csvFields.forEach(col => { score[col] = 0; });
+          csvRows.forEach(r => {
+            csvFields.forEach(col => { if (isFiniteNumber(r[col])) score[col]++; });
+          });
+          numericFields = csvFields.filter(col => (score[col] / Math.max(1, csvRows.length)) >= 0.7);
+
+          // UI：X 欄位
+          const xSel = $('#xField');
+          xSel.innerHTML = '';
+          csvFields.forEach(col => {
+            const opt = document.createElement('option');
+            opt.value = col; opt.textContent = col;
+            // 預設優先數值欄，再 fallback 第一欄
+            xSel.appendChild(opt);
+          });
+          const defaultX = numericFields[0] || csvFields[0];
+          xSel.value = defaultX;
+
+          // UI：Y 欄位多選（排除 X）
+          renderYFields(defaultX);
+
+          // 顯示繪圖控制
+          $('#xAxisSection').style.display = '';
+          $('#yFieldsSection').style.display = '';
+          $('#plotStatus').textContent = '';
+          $('#downloadBtn').disabled = true;
+          currentPlotOk = false;
+        },
+        error: (err) => {
+          alert('CSV 解析失敗：' + (err?.message || err));
+        }
+      });
+    });
+
+    function renderYFields(xCol) {
+      const box = $('#yFields');
+      box.innerHTML = '';
+      csvFields.filter(col => col !== xCol).forEach(col => {
+        const id = 'y_' + col.replace(/\W+/g, '_');
+        const row = document.createElement('label');
+        row.innerHTML = `<input type="checkbox" id="${id}" data-col="${col}" /> ${col}`;
+        box.appendChild(row);
+      });
+      // 預設全選數值欄（排除 X）
+      const yCandidates = numericFields.filter(col => col !== xCol);
+      $$('#yFields input[type="checkbox"]').forEach(chk => {
+        if (yCandidates.includes(chk.dataset.col)) chk.checked = true;
+      });
+    }
+
+    $('#xField').addEventListener('change', (e) => {
+      renderYFields(e.target.value);
+    });
+
+    $('#selectAllY').addEventListener('click', () => {
+      $$('#yFields input[type="checkbox"]').forEach(chk => chk.checked = true);
+    });
+    $('#clearAllY').addEventListener('click', () => {
+      $$('#yFields input[type="checkbox"]').forEach(chk => chk.checked = false);
+    });
+
+    $('#drawBtn').addEventListener('click', () => {
+      if (!csvRows.length) return;
+
+      const xCol = $('#xField').value;
+      const yCols = $$('#yFields input[type="checkbox"]:checked').map(chk => chk.dataset.col);
+      if (!yCols.length) { alert('請至少勾選一個 Y 軸欄位'); return; }
+
+      // 組 traces（會自動過濾非數值）
+      const traces = yCols.map(y => {
+        const xs = [], ys = [];
+        for (const row of csvRows) {
+          const xv = row[xCol];
+          const yv = row[y];
+          if (isFiniteNumber(xv) && isFiniteNumber(yv)) {
+            xs.push(xv); ys.push(yv);
+          }
+        }
+        return { x: xs, y: ys, mode: 'lines+markers', name: y, type: 'scatter' };
+      });
+
+      const layout = {
+        margin: { l: 70, r: 20, t: 35, b: 55 },
+        xaxis: { title: xCol, type: $('#logX').checked ? 'log' : 'linear' },
+        yaxis: { title: '值',   type: $('#logY').checked ? 'log' : 'linear' },
+        legend: { orientation: 'h' }
+      };
+
+      Plotly.newPlot('plot', traces, layout, { responsive: true })
+        .then(() => {
+          $('#downloadBtn').disabled = false;
+          currentPlotOk = true;
+          $('#plotStatus').textContent = '完成繪圖。';
+        })
+        .catch(err => {
+          currentPlotOk = false;
+          $('#plotStatus').textContent = '繪圖失敗：' + (err?.message || err);
+        });
+    });
+
+    $('#downloadBtn').addEventListener('click', async () => {
+      if (!currentPlotOk) return;
+      try {
+        const url = await Plotly.toImage('plot', { format: 'png', width: 960, height: 600, scale: 2 });
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'plot.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (e) {
+        alert('下載失敗：' + (e?.message || e));
+      }
+    });
+
+    /*************************
+     * 圖片 → PPT 生成功能
+     *************************/
+    let pptFiles = [];                   // File[]
+    let imgPositions = new Map();        // Map(index -> {row, col})
+    let lastRows = 3, lastCols = 3;
+
+    const rowsSel = $('#pptRows');
+    const colsSel = $('#pptCols');
+
+    function updateCapacityHint() {
+      const rows = parseInt(rowsSel.value, 10);
+      const cols = parseInt(colsSel.value, 10);
+      const cap = rows * cols;
+      const n = pptFiles.length;
+
+      const hint = $('#capacityHint');
+      if (!n) {
+        hint.innerHTML = '';
+        return;
+      }
+      if (n <= cap) {
+        hint.innerHTML = `<span class="ok">目前圖片數：${n}；單頁容量：${cap}（可全部放入同一頁）。</span>`;
+      } else {
+        const pages = Math.ceil(n / cap);
+        hint.innerHTML = `<div class="warn">目前圖片數：${n} &gt; 單頁容量：${cap}。將自動切成 <b>${pages}</b> 頁（每頁 ${rows}×${cols} 格）。</div>`;
+      }
+    }
+
+    $('#pptImages').addEventListener('change', (e) => {
+      pptFiles = Array.from(e.target.files || []);
+      // 清空或保留既有選位：若檔名相同則嘗試保留
+      const nameToOld = new Map();
+      for (const [idx, pos] of imgPositions.entries()) {
+        const f = pptFiles[idx];
+        if (f) nameToOld.set(f.name, pos);
+      }
+      imgPositions.clear();
+      pptFiles.forEach((f, i) => {
+        if (nameToOld.has(f.name)) imgPositions.set(i, nameToOld.get(f.name));
+      });
+
+      renderPreview();
+      $('#downloadPptBtn').disabled = pptFiles.length === 0;
+      updateCapacityHint();
+    });
+
+    rowsSel.addEventListener('change', () => {
+      lastRows = parseInt(rowsSel.value, 10);
+      renderPreview(true);
+      updateCapacityHint();
+    });
+    colsSel.addEventListener('change', () => {
+      lastCols = parseInt(colsSel.value, 10);
+      renderPreview(true);
+      updateCapacityHint();
+    });
+
+    $('#autoFillBtn').addEventListener('click', () => {
+      const rows = parseInt(rowsSel.value, 10);
+      const cols = parseInt(colsSel.value, 10);
+      const cells = [];
+      for (let r = 1; r <= rows; r++) for (let c = 1; c <= cols; c++) cells.push({ r, c });
+
+      pptFiles.forEach((_, i) => {
+        const pos = cells[i % cells.length];
+        imgPositions.set(i, { row: pos.r, col: pos.c });
+      });
+      renderPreview(false);
+    });
+
+    function renderPreview(tryKeep = true) {
+      const wrap = $('#pptImgPreview');
+      wrap.innerHTML = '';
+
+      const rows = parseInt(rowsSel.value, 10);
+      const cols = parseInt(colsSel.value, 10);
+
+      pptFiles.forEach((file, idx) => {
+        const row = document.createElement('div');
+        row.className = 'img-row';
+
+        const imgEl = document.createElement('img');
+        imgEl.className = 'img-preview';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = file.name;
+
+        const sel = document.createElement('select');
+        sel.className = 'img-pos-select';
+        // 產生行列選項
+        for (let r = 1; r <= rows; r++) {
+          for (let c = 1; c <= cols; c++) {
+            const opt = document.createElement('option');
+            opt.value = `${r},${c}`;
+            opt.textContent = `${r} 行 ${c} 列`;
+            sel.appendChild(opt);
+          }
+        }
+
+        // 預設位置：保留舊值或給 (1,1)
+        if (tryKeep && imgPositions.has(idx)) {
+          const p = imgPositions.get(idx);
+          const k = `${p.row},${p.col}`;
+          if ([...sel.options].some(o => o.value === k)) {
+            sel.value = k;
+          } else {
+            sel.value = '1,1';
+          }
+        } else if (!imgPositions.has(idx)) {
+          sel.value = '1,1';
+        }
+
+        sel.addEventListener('change', (ev) => {
+          const [r, c] = ev.target.value.split(',').map(v => parseInt(v, 10));
+          imgPositions.set(idx, { row: r, col: c });
+        });
+
+        // preview
+        const fr = new FileReader();
+        fr.onload = (ev) => { imgEl.src = ev.target.result; };
+        fr.readAsDataURL(file);
+
+        // 初始同步
+        const [r0, c0] = (sel.value || '1,1').split(',').map(v => parseInt(v, 10));
+        imgPositions.set(idx, { row: r0, col: c0 });
+
+        row.appendChild(imgEl);
+        row.appendChild(nameSpan);
+        row.appendChild(sel);
+        wrap.appendChild(row);
+      });
+    }
+
+    $('#downloadPptBtn').addEventListener('click', async () => {
+      if (pptFiles.length === 0) { alert('請先選擇圖片'); return; }
+
+      const rows = parseInt(rowsSel.value, 10);
+      const cols = parseInt(colsSel.value, 10);
+      const cap = rows * cols;
+      const allowOverlap = $('#allowOverlap').checked;
+
+      // 檢查是否有重疊（單頁計算）。若不允許重疊，且圖片數 ≤ cap，則不允許相同位置。
+      if (!allowOverlap && pptFiles.length <= cap) {
+        const seen = new Set();
+        for (let i = 0; i < pptFiles.length; i++) {
+          const pos = imgPositions.get(i) || { row: 1, col: 1 };
+          const key = `${pos.row},${pos.col}`;
+          if (seen.has(key)) {
+            alert(`位置重疊：${pptFiles[i].name} 與其他圖片都選了 ${key}。
+請調整或勾選「允許重疊」。`);
+            return;
+          }
+          seen.add(key);
+        }
+      }
+
+      const pptx = new PptxGenJS();
+      // 取得頁面尺寸（inches）
+      const slideW = pptx.width;   // 10 by default
+      const slideH = pptx.height;  // 5.625 by default
+      const cellW  = slideW / cols;
+      const cellH  = slideH / rows;
+
+      // 將圖片分頁（若超過容量）
+      const total = pptFiles.length;
+      const pages = Math.max(1, Math.ceil(total / cap));
+
+      // 預先轉 Base64 以平行化
+      const base64Arr = await Promise.all(pptFiles.map(f => toBase64(f)));
+
+      let idx = 0;
+      for (let p = 0; p < pages; p++) {
+        const slide = pptx.addSlide();
+
+        const start = p * cap;
+        const end = Math.min(total, start + cap);
+
+        for (let i = start; i < end; i++) {
+          const file = pptFiles[i];
+          const dataUrl = base64Arr[i];
+
+          // 該圖片目標位置（若超載到下一頁，仍沿用指定位置；自動填滿就會輪流）
+          const chosen = imgPositions.get(i) || { row: 1, col: 1 };
+          const r = chosen.row, c = chosen.col;
+
+          // 在本頁的實際 cell 座標（仍以 r/c 決定）
+          const x = (c - 1) * cellW;
+          const y = (r - 1) * cellH;
+
+          // 使用 contain 維持比例；指定 bounding box（x,y,w,h）
+          slide.addImage({
+            data: dataUrl,
+            x, y,
+            w: cellW, h: cellH,
+            sizing: { type: 'contain', w: cellW, h: cellH }
+          });
+          idx++;
+        }
+      }
+
+      try {
+        await pptx.writeFile({ fileName: 'images_grid.pptx' });
+      } catch (e) {
+        alert('產生 PPT 失敗：' + (e?.message || e));
+      }
+    });
+
+    // 初始提示
+    updateCapacityHint();
+  </script>
+</body>
+</html>
