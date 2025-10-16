@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>多函數線方程比對視覺化</title>
+  <style>
+    :root{
+      --bg:#0b1020; --panel:#111827; --muted:#9aa4b2; --fg:#e5e7eb; --accent:#60a5fa;
+      --warn:#f59e0b; --bad:#ef4444; --ok:#10b981; --na:#94a3b8; --axis:#334155; --grid:#1f2a49;
+    }
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Noto Sans TC",Segoe UI,Roboto,Helvetica,Arial}
+    .wrap{max-width:1280px;margin:28px auto;padding:0 16px}
+    h1{font-size:22px;margin:0 0 8px}
+    .muted{color:var(--muted)} .small{font-size:12px}
+    .grid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px}
+    .card{background:var(--panel);border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:14px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input[type="file"],select,input[type="text"],input[type="number"]{background:#0e1530;color:var(--fg);border:1px solid #1f2a49;border-radius:10px;padding:8px 10px;outline:none}
+    textarea{width:100%;min-height:120px;background:#0e1530;color:var(--fg);border:1px solid #1f2a49;border-radius:10px;padding:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;resize:vertical}
+    .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+    .btn{appearance:none;border:0;border-radius:10px;padding:8px 12px;background:var(--accent);color:#051427;font-weight:700;cursor:pointer}
+    .btn.secondary{background:#334155;color:#e5e7eb}
+    .checkboxes{display:flex;flex-wrap:wrap;gap:6px;max-height:140px;overflow:auto;background:#0e1530;border:1px solid #1f2a49;border-radius:10px;padding:6px}
+    .chip{background:#0e1530;border:1px solid #1f2a49;border-radius:999px;padding:2px 8px;font-size:12px}
+    canvas{width:100%;height:460px;background:#0b1228;border:1px solid #1f2a49;border-radius:12px}
+    .legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}
+    .lg{display:inline-flex;gap:6px;align-items:center;font-size:12px;border:1px solid #1f2a49;padding:3px 8px;border-radius:999px;background:#0e1530}
+    .dot{width:10px;height:10px;border-radius:50%}
+    .line{width:14px;height:3px;border-radius:2px}
+    .err{white-space:pre-wrap;color:#fecaca;background:#3b0a0a;border:1px solid #7f1d1d;padding:10px;border-radius:10px;margin-top:8px;display:none}
+    .slider-row{display:grid;grid-template-columns:1fr 100px 1fr;gap:8px;align-items:center}
+    .kbd{font:12px ui-monospace,Menlo,Consolas,monospace;background:#0e1530;border:1px solid #1e2a4a;padding:2px 6px;border-radius:6px;color:#ddd}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>多函數線方程比對視覺化</h1>
+  <p class="small muted">載入 <span class="kbd">.csv</span>（前四欄=變數 <span class="kbd">v1~v4</span>，第五欄=<span class="kbd">value</span>）與 <span class="kbd">.txt</span>（含 <span class="kbd">[PARAMS]</span> 與 <span class="kbd">[EQUATION]</span>），依不同勾選條件繪製 <b>多條函數線</b> 與 <b>資料點</b>。差異以 |f/數據-1| 分色：≤5%/5–10%/≥10%/NA。</p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="section-title">1) 檔案與情境</div>
+      <div class="row">
+        <div><label>CSV 檔</label><input id="csvFile" type="file" accept=".csv"/></div>
+        <div><label>TXT 方程檔</label><input id="txtFile" type="file" accept=".txt"/></div>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end">
+          <button class="btn secondary" id="demo1">載入內建示例 A</button>
+          <button class"btn secondary" id="demo2">載入內建示例 B</button>
+        </div>
+      </div>
+      <div id="loadMsg" class="small muted" style="margin-top:6px">尚未載入資料</div>
+
+      <div class="section-title" style="margin-top:10px">2) 畫圖設定</div>
+      <div class="row" id="axisRow" style="gap:12px">
+        <div>
+          <label>X 軸（僅限前 3 欄）</label>
+          <select id="xSelect"></select>
+        </div>
+        <div id="filters" style="flex:1"></div>
+        <div style="min-width:260px">
+          <label>第 4 欄（可選）數值範圍</label>
+          <div class="row">
+            <input type="number" step="any" id="v4Min" placeholder="min" style="width:120px">
+            <input type="number" step="any" id="v4Max" placeholder="max" style="width:120px">
+            <button class="btn secondary" id="applyRange">套用</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-title" style="margin-top:10px">3) 參數與方程</div>
+      <div class="row">
+        <div style="flex:1">
+          <label>[EQUATION]（編輯後按下套用；需定義 <span class="kbd">eq = ...</span>）</label>
+          <textarea id="eqText"></textarea>
+          <div class="row" style="margin-top:6px">
+            <button class="btn" id="applyEq">套用/重新解析方程</button>
+          </div>
+        </div>
+        <div style="flex:1">
+          <label>[PARAMS]（滑桿＋數值輸入；即時更新）</label>
+          <div id="params"></div>
+        </div>
+      </div>
+
+      <div class="legend small" style="margin-top:10px">
+        <span class="lg"><span class="dot" style="background:var(--ok)"></span> ≤5%</span>
+        <span class="lg"><span class="dot" style="background:var(--warn)"></span> 5–10%</span>
+        <span class="lg"><span class="dot" style="background:var(--bad)"></span> ≥10%</span>
+        <span class="lg"><span class="dot" style="background:var(--na)"></span> NA</span>
+        <span class="lg"><span class="line" style="background:#22d3ee"></span> 函數線（每個勾選組合一條）</span>
+        <span class="lg"><span class="dot" style="background:#bbb"></span> 數據點</span>
+      </div>
+
+      <div id="err" class="err"></div>
+    </div>
+
+    <div class="card">
+      <div class="small" id="status">就緒</div>
+      <canvas id="chart" width="900" height="460"></canvas>
+      <div id="legend" class="legend"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ====== 小工具 ======
+const $ = (id)=>document.getElementById(id);
+const fmt = (x)=> Number(x).toPrecision(10).replace(/\.?0+$/, '');
+const asc = (a,b)=> a-b;
+const clamp01 = (v)=> v<0?0:(v>1?1:v);
+
+// CSV 簡易解析（支援引號與逗號）
+function parseCSV(text){
+  const rows = []; let cur='', row=[], inQ=false;
+  for(let i=0;i<text.length;i++){
+    const ch = text[i];
+    if(inQ){
+      if(ch === '"'){
+        if(text[i+1] === '"'){ cur += '"'; i++; } else inQ = false;
+      } else cur += ch;
+    }else{
+      if(ch === '"'){ inQ = true; }
+      else if(ch === ','){ row.push(cur); cur=''; }
+      else if(ch === '\r'){ /* skip */ }
+      else if(ch === '\n'){ row.push(cur); rows.push(row); cur=''; row=[]; }
+      else cur += ch;
+    }
+  }
+  if(cur.length>0 || row.length>0){ row.push(cur); rows.push(row); }
+  return rows;
+}
+function uniq(arr){ return Array.from(new Set(arr)); }
+
+// 顏色：依索引分配（HSL golden-ratio hashing）
+function colorN(i){
+  const golden = 0.618033988749895;
+  const h = (i * golden % 1) * 360;
+  return `hsl(${h}, 70%, 55%)`;
+}
+
+// ====== 安全的表達式解析（只支援必要運算與白名單函式） ======
+const FUNCS = {
+  clamp:(a,lo,hi)=> Math.min(Math.max(a,lo),hi),
+  inv:(z)=> 1/ z,
+  min:Math.min,
+  max:Math.max,
+  abs:Math.abs,
+  sqrt:Math.sqrt,
+  log:Math.log,
+  exp:Math.exp,
+  pow:Math.pow
+};
+const RESERVED = new Set(Object.keys(FUNCS));
+
+function Parser(src){
+  this.s=src; this.i=0; this.n=src.length;
+  this.peek=()=> this.s[this.i]||'';
+  this.next=()=> this.s[this.i++]||'';
+  this.eof =()=> this.i>=this.n;
+  this.skip=()=>{ while(!this.eof() && /\s/.test(this.peek())) this.i++; };
+  this.match=(ch)=>{ this.skip(); if(this.s.startsWith(ch, this.i)){ this.i+=ch.length; return true;} return false; };
+  this.expect=(ch,msg)=>{ if(!this.match(ch)) throw new Error(msg||`預期 '${ch}'`); };
+  this.number=()=>{ this.skip(); const st=this.i; let seen=false; while(/\d/.test(this.peek())){ this.next(); seen=true; }
+    if(this.peek()==='.'){ this.next(); while(/\d/.test(this.peek())){ this.next(); seen=true; } }
+    if((this.peek()==='e'||this.peek()==='E')){ const save=this.i; this.next(); if(this.peek()==='+'||this.peek()==='-') this.next(); let saw=false; while(/\d/.test(this.peek())){ this.next(); saw=true; } if(!saw) this.i=save; }
+    if(!seen) throw new Error('數字語法錯誤'); return Number(this.s.slice(st,this.i)); };
+  this.ident=()=>{ this.skip(); if(!/[A-Za-z_]/.test(this.peek())) throw new Error('名稱需以字母或_開頭'); const st=this.i; this.next(); while(/[A-Za-z0-9_]/.test(this.peek())) this.next(); return this.s.slice(st,this.i); };
+}
+function evalExpr(parser, env){
+  function parseExpression(){ let left=parseTerm(); for(;;){ parser.skip(); if(parser.match('+')) left=op2(left,parseTerm(),(a,b)=>a+b); else if(parser.match('-')) left=op2(left,parseTerm(),(a,b)=>a-b); else break; } return left; }
+  function parseTerm(){ let left=parsePower(); for(;;){ parser.skip(); if(parser.match('*')) left=op2(left,parsePower(),(a,b)=>a*b); else if(parser.match('/')) left=op2(left,parsePower(),(a,b)=>a/b); else if(parser.match('%')) left=op2(left,parsePower(),(a,b)=>a%b); else break; } return left; }
+  function parsePower(){ let left=parseUnary(); parser.skip(); if(parser.match('**')){ const r=parsePower(); left = op2(left,r,(a,b)=>Math.pow(a,b)); } return left; }
+  function parseUnary(){ parser.skip(); if(parser.match('+')) return op1(parseUnary(),(x)=>+x); if(parser.match('-')) return op1(parseUnary(),(x)=>-x); return parsePrimary(); }
+  function parsePrimary(){ parser.skip(); if(parser.match('(')){ const v=parseExpression(); parser.expect(')'); return v; }
+    if(/[0-9.]/.test(parser.peek())) return parser.number();
+    if(/[A-Za-z_]/.test(parser.peek())){ const name=parser.ident(); parser.skip(); if(parser.match('(')){ if(!(name in FUNCS)) throw new Error(`函式不被允許: ${name}`); const args=[]; if(!parser.match(')')){ for(;;){ args.push(parseExpression()); if(parser.match(')')) break; parser.expect(',', '函式參數需以逗號分隔'); } } const arity=FUNCS[name].length; if(args.length!==arity) throw new Error(`${name} 需 ${arity} 參數，實得 ${args.length}`); return FUNCS[name](...args); } else { if(name in env) return env[name]; throw new Error(`未定義變數: ${name}`); } }
+    throw new Error('語法錯誤：無法解析的項'); }
+  function op2(a,b,f){ return f(a,b); }
+  function op1(a,f){ return f(a); }
+  const val=parseExpression(); parser.skip(); if(!parser.eof()) throw new Error('多餘字元於表達式結尾'); return val;
+}
+
+// ====== 狀態 ======
+let headers = [];
+let dataRows = []; // array of objects {col1, col2, col3, col4, value}
+let params = {}; let paramsInit = {};
+let equations = []; // [ [lhs, rhs], ... ] 必須含 eq
+const chart = $('chart');
+const ctx = chart.getContext('2d');
+const legendDiv = $('legend');
+const errBox = $('err');
+const statusEl = $('status');
+
+// ====== 檔案載入 ======
+$('csvFile').addEventListener('change', (e)=>{
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  const fr = new FileReader();
+  fr.onload = ()=>{
+    try{
+      loadCSV(String(fr.result||''));
+      updateUI();
+    }catch(err){ showError(err); }
+  };
+  fr.readAsText(f, 'utf-8');
+});
+
+$('txtFile').addEventListener('change', (e)=>{
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  const fr = new FileReader();
+  fr.onload = ()=>{
+    try{
+      loadTXT(String(fr.result||''));
+      updateUI();
+    }catch(err){ showError(err); }
+  };
+  fr.readAsText(f, 'utf-8');
+});
+
+$('applyRange').addEventListener('click', updateUI);
+$('applyEq').addEventListener('click', ()=>{
+  try{
+    parseEquationFromTextarea();
+    updateUI();
+  }catch(err){ showError(err); }
+});
+
+// 內建示例 A/B（內嵌字串，方便快速驗證多函數線）
+const DEMO_A_CSV = [
+  ['v1','v2','v3','v4','value'],
+  [0.2,1,2,10,'-7.0'],
+  [0.25,1,2,10,'-6.0'],
+  [0.3,1,2,10,'-8.0'],
+  [0.2,2,2,10,'-5.0'],
+  [0.25,2,2,10,'-4.0'],
+  [0.3,2,2,10,'-6.0']
+].map(r=> r.join(',')).join('\n');
+
+const DEMO_A_TXT = `[PARAMS]
+a = 5
+b = 2
+c = -7
+
+[EQUATION]
+aa = inv(clamp(v1, 0.2, 0.3)) - inv(0.2)
+bb = inv(clamp(v1, 0.3, 0.4)) - inv(0.3)
+eq = c + b*bb + a*aa
+`;
+
+const DEMO_B_CSV = [
+  ['v1','v2','v3','v4','value'],
+  [1,1,2,10,6],
+  [2,1,2,10,7],
+  [3,1,2,10,8],
+  [4,1,2,10,9],
+  [1,2,2,10,8],
+  [2,2,2,10,9],
+  [3,2,2,10,10],
+  [4,2,2,10,11]
+].map(r=> r.join(',')).join('\n');
+
+const DEMO_B_TXT = `[PARAMS]
+a = 1
+b = 2
+c = 3
+
+[EQUATION]
+eq = c + b*v2 + a*v1
+`;
+
+$('demo1').addEventListener('click', ()=>{ loadCSV(DEMO_A_CSV); loadTXT(DEMO_A_TXT); updateUI(); });
+$('demo2').addEventListener('click', ()=>{ loadCSV(DEMO_B_CSV); loadTXT(DEMO_B_TXT); updateUI(); });
+
+function loadCSV(text){
+  const rows = parseCSV(text);
+  if(rows.length === 0) throw new Error('CSV 為空');
+  // 判斷是否有表頭
+  const first = rows[0];
+  const hasHeader = first.slice(0,5).some(v => isNaN(Number(v)));
+  if(hasHeader){
+    headers = first.slice(0,5).map(s => (s||'').trim()) ;
+  }else{
+    headers = ['v1','v2','v3','v4','value'];
+  }
+  const raw = hasHeader ? rows.slice(1) : rows;
+  const cleaned = [];
+  for(const r of raw){
+    if(r.length < 5) continue;
+    const c1 = r[0].trim(), c2 = r[1].trim(), c3 = r[2].trim(), c4 = r[3].trim(), y = r[4].trim();
+    if(c1===''||c2===''||c3===''||c4===''||y==='') continue;
+    const obj = {};
+    obj[headers[0]] = Number(c1);
+    obj[headers[1]] = Number(c2);
+    obj[headers[2]] = Number(c3);
+    obj[headers[3]] = Number(c4);
+    obj[headers[4]] = Number(y);
+    cleaned.push(obj);
+  }
+  if(cleaned.length === 0) throw new Error('無有效資料列');
+  dataRows = cleaned;
+  $('loadMsg').textContent = `已載入 CSV：${dataRows.length} 列；欄位＝[${headers.join(', ')}]`;
+  // 建立 X 軸選單（前三欄）
+  const xSel = $('xSelect'); xSel.innerHTML='';
+  for(let i=0;i<3;i++){ const opt=document.createElement('option'); opt.value=headers[i]; opt.textContent=headers[i]; xSel.appendChild(opt); }
+  xSel.selectedIndex = 0;
+  xSel.onchange = updateUI;
+  buildFilters();
+}
+
+function buildFilters(){
+  const xVar = $('xSelect').value || headers[0];
+  const indices = [0,1,2];
+  const others = indices.filter(i => headers[i] !== xVar);
+  const filtersDiv = $('filters'); filtersDiv.innerHTML='';
+  others.forEach(idx=>{
+    const key = headers[idx];
+    const box = document.createElement('div');
+    box.style.minWidth='220px';
+    box.innerHTML = `<label>${key} 選值（多選）</label><div class="checkboxes" id="filter_${key}"></div>`;
+    filtersDiv.appendChild(box);
+    const panel = box.querySelector('.checkboxes');
+    const values = uniq(dataRows.map(r => r[key])).sort((a,b)=> a-b);
+    values.forEach(v=>{
+      const id = `cb_${key}_${String(v).replace(/[^A-Za-z0-9_\-]/g,'_')}`;
+      const lab = document.createElement('label');
+      lab.style.display='inline-flex'; lab.style.alignItems='center'; lab.style.gap='6px';
+      lab.innerHTML = `<input type="checkbox" id="${id}" data-col="${key}" data-val="${v}" checked> <span class="chip">${v}</span>`;
+      panel.appendChild(lab);
+    });
+    panel.addEventListener('change', updateUI);
+  });
+  // 第四欄範圍
+  const v4vals = dataRows.map(r => r[headers[3]]).filter(v => isFinite(v));
+  if(v4vals.length>0){
+    $('v4Min').value = String(Math.min(...v4vals));
+    $('v4Max').value = String(Math.max(...v4vals));
+  }else{ $('v4Min').value=''; $('v4Max').value=''; }
+}
+
+function loadTXT(text){
+  // 解析 [PARAMS]/[EQUATION]
+  const lines = text.split(/\r?\n/);
+  let mode = null; params = {}; equations = [];
+  for(const raw of lines){
+    const line = raw.trim();
+    if(!line || line.startsWith('#')) continue;
+    if(/^\[\s*PARAMS\s*\]$/i.test(line)){ mode='P'; continue; }
+    if(/^\[\s*EQUATION\s*\]$/i.test(line)){ mode='E'; continue; }
+    if(/^\[\s*\/PARAMS\s*\]$/i.test(line) || /^\[\s*\/EQUATION\s*\]$/i.test(line)){ mode=null; continue; }
+    const eq = line.indexOf('=');
+    if(eq<0) continue;
+    const left = line.slice(0,eq).trim();
+    const right = line.slice(eq+1).trim();
+    if(mode==='P'){
+      const val = Number(right);
+      if(!isFinite(val)) throw new Error(`參數 ${left} 不是數字`);
+      params[left] = val;
+    }else{
+      equations.push([left, right]);
+    }
+  }
+  paramsInit = Object.assign({}, params);
+  // 放到 textarea，生成滑桿
+  $('eqText').value = equations.map(([l,r])=> `${l} = ${r}`).join('\n');
+  renderParams();
+}
+
+function renderParams(){
+  const div = $('params'); div.innerHTML='';
+  const keys = Object.keys(params);
+  if(keys.length===0){ div.innerHTML='<div class="small muted">（此 TXT 未定義參數）</div>'; return; }
+  keys.forEach(k=>{
+    const v = params[k], init = paramsInit[k] ?? v;
+    const span = Math.max(Math.abs(init)*5, 10), min = init - span, max = init + span;
+    const row = document.createElement('div'); row.className='slider-row';
+    row.innerHTML = `<label class="chip" style="justify-self:flex-start">${k}</label>
+                     <input type="number" step="any" id="num_${k}" value="${v}">
+                     <input type="range" id="rng_${k}" min="${min}" max="${max}" step="${(max-min)/1000}" value="${v}">`;
+    div.appendChild(row);
+    const num = row.querySelector('#num_'+k), rng = row.querySelector('#rng_'+k);
+    num.addEventListener('input', ()=>{ const nv = Number(num.value); params[k]=nv; rng.value=String(nv); updateUI(); });
+    rng.addEventListener('input', ()=>{ const nv = Number(rng.value); params[k]=nv; num.value=String(nv); updateUI(); });
+  });
+}
+
+function parseEquationFromTextarea(){
+  const lines = $('eqText').value.split(/\r?\n/);
+  const list = [];
+  for(const raw of lines){
+    const line = raw.trim(); if(!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('='); if(eq<0) throw new Error(`EQUATION 行缺 '='：${line}`);
+    list.push([ line.slice(0,eq).trim(), line.slice(eq+1).trim() ]);
+  }
+  equations = list;
+}
+
+// ====== 計算、分群、繪圖 ======
+function selectedValuesFor(col){
+  const panel = $('filter_'+col);
+  if(!panel) return null;
+  const boxes = Array.from(panel.querySelectorAll('input[type=checkbox]'));
+  const chosen = boxes.filter(b=>b.checked).map(b=> Number(b.dataset.val));
+  if(chosen.length===0 || chosen.length===boxes.length) return null; // null 表示全選
+  return chosen;
+}
+function rowPasses(r, xVar){
+  // 兩個其他欄的勾選
+  const idxs = [0,1,2]; const others = idxs.filter(i => headers[i] !== xVar);
+  for(const i of others){
+    const col = headers[i];
+    const sel = selectedValuesFor(col);
+    if(sel && !sel.includes(Number(r[col]))) return false;
+  }
+  // 第4欄範圍
+  const useRange = $('v4Min').value!=='' && $('v4Max').value!=='';
+  if(useRange){
+    const mn = Number($('v4Min').value), mx = Number($('v4Max').value);
+    const v4 = Number(r[headers[3]]);
+    if(!(v4>=mn && v4<=mx)) return false;
+  }
+  return true;
+}
+
+function evalEqForRow(r){
+  // env：v1..v4 和參數
+  const env = Object.assign({}, params);
+  env['v1'] = r[headers[0]]; env['v2'] = r[headers[1]]; env['v3'] = r[headers[2]]; env['v4'] = r[headers[3]];
+  let eqVal = NaN;
+  for(const [lhs, rhs] of equations){
+    const p = new Parser(rhs);
+    const val = evalExpr(p, env);
+    env[lhs] = val;
+    if(lhs === 'eq') eqVal = val;
+  }
+  return eqVal;
+}
+
+function updateUI(){
+  try{
+    hideError();
+    if(dataRows.length===0 || equations.length===0){ statusEl.textContent='請先載入 CSV 與 TXT'; ctx.clearRect(0,0,chart.width,chart.height); legendDiv.innerHTML=''; return; }
+    const xVar = $('xSelect').value || headers[0];
+    const idxs = [0,1,2]; const others = idxs.filter(i => headers[i] !== xVar);
+    // 先取通過篩選的列
+    const rows = dataRows.filter(r => rowPasses(r, xVar));
+    if(rows.length===0){ statusEl.textContent='篩選後無資料'; ctx.clearRect(0,0,chart.width,chart.height); legendDiv.innerHTML=''; return; }
+    // 組合：為其他兩欄的選取值建立 (colA, valA, colB, valB)
+    const colA = headers[others[0]], colB = headers[others[1]];
+    const valsA = selectedValuesFor(colA) ?? uniq(rows.map(r=> r[colA])).sort(asc);
+    const valsB = selectedValuesFor(colB) ?? uniq(rows.map(r=> r[colB])).sort(asc);
+    const combos = [];
+    for(const a of valsA) for(const b of valsB) combos.push([a,b]);
+    // 每個組合建立函數線資料（依 x 排序）
+    const series = []; const allX = []; const allY = [];
+    combos.forEach(([a,b], idx)=>{
+      const subset = rows.filter(r => Number(r[colA])===Number(a) && Number(r[colB])===Number(b));
+      if(subset.length===0) return;
+      const pts = subset.map(r=>{
+        const x = Number(r[xVar]);
+        const y = Number(r[headers[4]]);
+        const f = evalEqForRow(r);
+        const ratio = (y!==0 && isFinite(f) && isFinite(y)) ? (f/y - 1) : NaN;
+        allX.push(x); allY.push(y); if(isFinite(f)) allY.push(f);
+        return {x, y, f, ratio};
+      }).sort((p,q)=> p.x - q.x);
+      series.push({label: `${colA}=${a} & ${colB}=${b}`, color: colorN(series.length), pts});
+    });
+    drawChart(xVar, series);
+    // 統計
+    const totalPts = series.reduce((s,ss)=> s + ss.pts.length, 0);
+    const n10 = series.reduce((s,ss)=> s + ss.pts.filter(p=> Math.abs(p.ratio)>=0.10).length, 0);
+    const n05 = series.reduce((s,ss)=> s + ss.pts.filter(p=> Math.abs(p.ratio)>=0.05 && Math.abs(p.ratio)<0.10).length, 0);
+    statusEl.innerHTML = `組合數 ${series.length}｜點數 ${totalPts}｜<span style="color:var(--bad)">≥10%</span>：${n10}｜<span style="color:var(--warn)">5–10%</span>：${n05}`;
+  }catch(err){ showError(err); }
+}
+
+function drawChart(xVar, series){
+  const W = chart.width, H = chart.height, m = {l:56,r:16,t:10,b:38};
+  ctx.clearRect(0,0,W,H);
+  // 收集比例尺 domain
+  const xs = []; const ys = [];
+  series.forEach(s => s.pts.forEach(p=>{ xs.push(p.x); ys.push(p.y); if(isFinite(p.f)) ys.push(p.f); }));
+  if(xs.length===0){ legendDiv.innerHTML=''; return; }
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const ymin = Math.min(...ys), ymax = Math.max(...ys);
+  const padX = (xmax-xmin||1)*0.05, padY=(ymax-ymin||1)*0.08;
+  const Xmin=xmin-padX, Xmax=xmax+padX, Ymin=ymin-padY, Ymax=ymax+padY;
+  const sx = (x)=> m.l + (x - Xmin)/(Xmax-Xmin) * (W - m.l - m.r);
+  const sy = (y)=> H - m.b - (y - Ymin)/(Ymax-Ymin) * (H - m.t - m.b);
+  // grid 與軸
+  ctx.strokeStyle = '#1f2a4a'; ctx.lineWidth=1;
+  for(let i=0;i<=6;i++){ const yy = m.t + i*(H-m.t-m.b)/6; ctx.beginPath(); ctx.moveTo(m.l,yy); ctx.lineTo(W-m.r,yy); ctx.stroke(); }
+  ctx.strokeStyle = '#334155'; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.moveTo(m.l, H-m.b); ctx.lineTo(W-m.r, H-m.b); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(m.l, m.t); ctx.lineTo(m.l, H-m.b); ctx.stroke();
+  // 軸刻度（簡化）
+  ctx.fillStyle='#cbd5e1'; ctx.font='11px system-ui, sans-serif';
+  for(let i=0;i<=6;i++){ const xv = Xmin + i*(Xmax-Xmin)/6; const yy=H-m.b+14; const xx=sx(xv); ctx.fillText(fmt(xv), xx-12, yy+2); }
+  for(let i=0;i<=6;i++){ const yv = Ymin + i*(Ymax-Ymin)/6; const yy=sy(yv)+4; ctx.fillText(fmt(yv), m.l-40, yy); }
+  // 畫資料點 + 分色
+  series.forEach(s =>{
+    s.pts.forEach(p=>{
+      const X = sx(p.x), Yd = sy(p.y);
+      let c = 'var(--na)';
+      if(isFinite(p.ratio)){
+        const ab = Math.abs(p.ratio);
+        if(ab>=0.10) c='var(--bad)'; else if(ab>=0.05) c='var(--warn)'; else c='var(--ok)';
+      }
+      // 主點（資料）
+      ctx.beginPath(); ctx.arc(X, Yd, 3.2, 0, Math.PI*2); ctx.fillStyle = c; ctx.fill();
+      // 細框
+      ctx.beginPath(); ctx.arc(X, Yd, 3.2, 0, Math.PI*2); ctx.strokeStyle='#0b1228'; ctx.lineWidth=1; ctx.stroke();
+    });
+  });
+  // 畫函數線
+  series.forEach((s)=>{
+    const pts = s.pts.filter(p=> isFinite(p.f)).sort((a,b)=> a.x-b.x);
+    if(pts.length>=2){
+      ctx.beginPath();
+      for(let i=0;i<pts.length;i++){
+        const X=sx(pts[i].x), Y=sy(pts[i].f);
+        if(i===0) ctx.moveTo(X,Y); else ctx.lineTo(X,Y);
+      }
+      ctx.strokeStyle = s.color; ctx.lineWidth=2.2; ctx.stroke();
+    }else if(pts.length===1){
+      // 只有一點：畫一個小標記（避免與資料點混淆），加一個短虛線
+      const X=sx(pts[0].x), Y=sy(pts[0].f);
+      ctx.beginPath(); ctx.arc(X, Y, 2.2, 0, Math.PI*2); ctx.fillStyle = s.color; ctx.fill();
+      ctx.setLineDash([5,4]); ctx.beginPath(); ctx.moveTo(X-10, Y); ctx.lineTo(X+10, Y); ctx.strokeStyle=s.color; ctx.lineWidth=1.5; ctx.stroke(); ctx.setLineDash([]);
+    }
+  });
+  // 圖例
+  legendDiv.innerHTML='';
+  series.forEach((s,i)=>{
+    const span = document.createElement('span'); span.className='lg';
+    span.innerHTML = `<span class="line" style="background:${s.color}"></span> ${s.label}`;
+    legendDiv.appendChild(span);
+  });
+}
+
+// ====== 錯誤處理 ======
+function showError(err){ errBox.style.display='block'; errBox.textContent = String(err && err.message ? err.message : err); }
+function hideError(){ errBox.style.display='none'; errBox.textContent=''; }
+
+// 初始提示
+statusEl.textContent = '請載入 CSV 與 TXT，或點選「載入內建示例」快速驗證多函數線。';
+</script>
+</body>
+</html>
