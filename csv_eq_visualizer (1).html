@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSV Equation Visualizer</title>
+  <style>
+    /* 基本排版與佈局 */
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      background: #3f51b5;
+      color: #fff;
+      padding: 0.5rem 1rem;
+      font-size: 1.3rem;
+    }
+    main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    /* 左側控制區 */
+    #controls {
+      flex: 0 0 280px;
+      overflow-y: auto;
+      border-right: 1px solid #ddd;
+      padding: 1rem;
+      box-sizing: border-box;
+      background: #fafafa;
+    }
+    #controls h3 {
+      margin-top: 1.2rem;
+      margin-bottom: 0.5rem;
+      font-size: 1rem;
+      color: #333;
+    }
+    #controls label, #controls select, #controls input, #controls textarea {
+      font-size: 0.9rem;
+    }
+    #controls input[type="range"] {
+      width: 100%;
+    }
+    #controls .param-row {
+      margin-bottom: 0.8rem;
+    }
+    #controls .checkbox-group {
+      margin: 0.3rem 0;
+      border: 1px solid #ddd;
+      padding: 0.4rem;
+      background: #fff;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    #controls .checkbox-group label {
+      display: block;
+      margin-bottom: 0.2rem;
+    }
+    #controls button {
+      display: block;
+      width: 100%;
+      margin: 0.5rem 0;
+      padding: 0.4rem;
+      font-size: 0.9rem;
+    }
+    /* 右側圖表區 */
+    #chart-container {
+      flex: 1;
+      position: relative;
+      background: #fff;
+      /* 讓容器填滿可用高度，canvas 才能取得正確尺寸 */
+      height: 100%;
+    }
+    #myCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #fff;
+    }
+    /* 統計與超標表 */
+    #stats {
+      padding: 0.5rem 1rem;
+      border-top: 1px solid #ddd;
+      background: #f5f5f5;
+      font-size: 0.9rem;
+      overflow-x: auto;
+    }
+    #bad-list {
+      max-height: 120px;
+      overflow-y: auto;
+      margin-top: 0.5rem;
+      border: 1px solid #ddd;
+      background: #fff;
+      padding: 0.4rem;
+    }
+    #bad-list table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    #bad-list th, #bad-list td {
+      padding: 0.2rem 0.3rem;
+      border: 1px solid #ccc;
+      text-align: left;
+    }
+    #legend {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: rgba(255,255,255,0.9);
+      border: 1px solid #ccc;
+      padding: 0.3rem;
+      max-width: 200px;
+      font-size: 0.8rem;
+      overflow-y: auto;
+      max-height: 50%;
+    }
+    #legend .series-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 0.2rem;
+    }
+    #legend .series-item input {
+      margin-right: 0.3rem;
+    }
+    #legend .series-color {
+      width: 1rem;
+      height: 0.6rem;
+      margin-right: 0.3rem;
+    }
+    #legend .error-box {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 0.4rem;
+      padding-top: 0.4rem;
+      border-top: 1px solid #ccc;
+    }
+    #legend .error-box .color-block {
+      width: 0.8rem;
+      height: 0.5rem;
+      margin-right: 0.2rem;
+      border: 1px solid #444;
+    }
+  </style>
+</head>
+<body>
+  <header>CSV 與方程式比較工具</header>
+  <main>
+    <aside id="controls">
+      <button id="loadSample">載入內建範例</button>
+      <div>
+        <label>載入 CSV：<input type="file" id="csvFile" accept=".csv"></label>
+      </div>
+      <div>
+        <label>載入 TXT：<input type="file" id="txtFile" accept=".txt"></label>
+      </div>
+      <h3>座標與篩選</h3>
+      <label for="xSelect">X 軸：</label>
+      <select id="xSelect"></select>
+      <div id="filterContainer"></div>
+      <h3>參數調整</h3>
+      <div id="params"></div>
+      <h3>Equation（可編輯）</h3>
+      <textarea id="equationArea" rows="8" style="width:100%;font-family: monospace;"></textarea>
+      <button id="recalc">重新計算</button>
+    </aside>
+    <section id="chart-container">
+      <canvas id="myCanvas"></canvas>
+      <div id="legend"></div>
+    </section>
+  </main>
+  <section id="stats">
+    <div id="statText"></div>
+    <div id="bad-list"></div>
+  </section>
+
+<script>
+// 內建範例：sample.csv 以及 sample_equation_numeric.txt 內容
+const builtInCSV = `v1,v2,v3,v4,value\n0.1,0,-40,31.40393541,-7.298731782\n0.2,0,25,28.77203027,-6.613613395\n0.3,0,50,39.76747676,-7.395125957\n0.4,0,75,50.04687903,-7.710169518\n0.5,0,90,54.66584375,-8.195985144\n0.6,0,100,51.91864865,-8.651654223\n0.7,0,150,64.54615662,-9.307775756\n0.8,0,200,61.78686225,-9.787220686\n0.9,0,250,70.39828969,-10.31280811\n1,0,300,68.29057432,-10.88237815\n`;
+const builtInTXT = `[PARAMS]\na = 5\nb = 2\nc = -7\n\n[EQUATION]\naa = inv(clamp(v1, 0.2, 0.3)) - inv(0.2)\nbb = inv(clamp(v1, 0.3, 0.4)) - inv(0.3)\neq = c + b*bb + a*aa`;
+
+// 全域資料結構
+let csvData = []; // 原始資料陣列
+let params = {};  // 參數名 -> {value, min, max, step}
+let equationLines = []; // 等式定義陣列
+let dataReady = false;
+
+const xSelect = document.getElementById('xSelect');
+const filterContainer = document.getElementById('filterContainer');
+const paramsDiv = document.getElementById('params');
+const eqArea = document.getElementById('equationArea');
+const recalcBtn = document.getElementById('recalc');
+const statText = document.getElementById('statText');
+const badList = document.getElementById('bad-list');
+const canvas = document.getElementById('myCanvas');
+const ctx = canvas.getContext('2d');
+const legendDiv = document.getElementById('legend');
+
+// 允許的函式與安全評估環境
+const safeFunctions = {
+  clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)),
+  inv: x => 1 / x,
+  abs: x => Math.abs(x),
+  min: Math.min,
+  max: Math.max,
+  pow: Math.pow,
+  sqrt: Math.sqrt,
+  exp: Math.exp,
+  log: Math.log,
+  sin: Math.sin,
+  cos: Math.cos,
+  tan: Math.tan,
+  asin: Math.asin,
+  acos: Math.acos,
+  atan: Math.atan,
+  atan2: Math.atan2,
+  PI: Math.PI,
+  E: Math.E
+};
+
+// 顏色列：系列邊框顏色循環
+const palette = [
+  '#e53935', '#8e24aa', '#3949ab', '#00897b', '#f4511e', '#5e35b1', '#1e88e5', '#43a047',
+  '#fdd835', '#fb8c00', '#6d4c41', '#00897b', '#c2185b', '#7cb342', '#00acc1', '#e53935'
+];
+
+// 解析 CSV 字串
+function parseCSV(text) {
+  const rows = text.trim().split(/\r?\n/);
+  if (!rows.length) return [];
+  if (rows[0].charCodeAt(0) === 0xfeff) {
+    rows[0] = rows[0].substr(1);
+  }
+  const header = rows[0].split(',');
+  const data = [];
+  for (let i = 1; i < rows.length; i++) {
+    const parts = rows[i].split(',');
+    if (parts.length < header.length) continue;
+    const obj = {};
+    for (let j = 0; j < header.length; j++) {
+      const key = header[j].trim();
+      let val = parts[j].trim();
+      if (val === '') { obj[key] = NaN; }
+      else {
+        const n = Number(val);
+        obj[key] = isNaN(n) ? val : n;
+      }
+    }
+    data.push(obj);
+  }
+  return data;
+}
+
+// 解析 TXT 內容
+function parseTxt(text) {
+  const paramRegex = /\[PARAMS\]([\s\S]*?)\n\[/;
+  const eqRegex = /\[EQUATION\]([\s\S]*)/;
+  const pMatch = paramRegex.exec(text);
+  const eMatch = eqRegex.exec(text);
+  const pSection = pMatch ? pMatch[1].trim() : '';
+  const eSection = eMatch ? eMatch[1].trim() : '';
+  const paramLines = pSection.split(/\r?\n/).filter(l => l.trim());
+  const eqLines = eSection.split(/\r?\n/).filter(l => l.trim());
+  const outParams = {};
+  paramLines.forEach(l => {
+    const parts = l.split('=');
+    if (parts.length >= 2) {
+      const name = parts[0].trim();
+      const val = parseFloat(parts[1]);
+      if (!isNaN(val)) {
+        const abs = Math.abs(val);
+        const range = Math.max(1, 2 * abs);
+        const min = val - range;
+        const max = val + range;
+        const step = range / 50;
+        outParams[name] = { value: val, min, max, step };
+      }
+    }
+  });
+  return { params: outParams, eqLines };
+}
+
+// 更新 X 軸選項
+function updateXOptions() {
+  xSelect.innerHTML = '';
+  const keys = ['v1','v2','v3'];
+  keys.forEach(key => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = key;
+    xSelect.appendChild(opt);
+  });
+  xSelect.value = keys[0];
+}
+
+// 建立篩選 UI
+function buildFilters() {
+  const xKey = xSelect.value;
+  const otherKeys = ['v1','v2','v3'].filter(k => k !== xKey);
+  otherKeys.push('v4');
+  filterContainer.innerHTML = '';
+  otherKeys.forEach(key => {
+    const values = Array.from(new Set(csvData.map(d => d[key]))).sort((a,b) => a-b);
+    const div = document.createElement('div');
+    const label = document.createElement('label');
+    label.textContent = key + ' 篩選';
+    div.appendChild(label);
+    const group = document.createElement('div');
+    group.className = 'checkbox-group';
+    values.forEach(v => {
+      const id = 'chk-' + key + '-' + v;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = id;
+      cb.dataset.key = key;
+      cb.dataset.value = v;
+      cb.checked = true;
+      const lbl = document.createElement('label');
+      lbl.htmlFor = id;
+      lbl.textContent = v;
+      const line = document.createElement('div');
+      line.appendChild(cb);
+      line.appendChild(lbl);
+      group.appendChild(line);
+      cb.addEventListener('change', () => {
+        updateAndDraw();
+      });
+    });
+    div.appendChild(group);
+    filterContainer.appendChild(div);
+  });
+}
+
+// 建立參數控制
+function buildParams() {
+  paramsDiv.innerHTML = '';
+  Object.keys(params).forEach(name => {
+    const row = document.createElement('div');
+    row.className = 'param-row';
+    const lbl = document.createElement('label');
+    lbl.textContent = name + ' = ';
+    const num = document.createElement('input');
+    num.type = 'number';
+    num.value = params[name].value;
+    num.step = params[name].step;
+    num.min = params[name].min;
+    num.max = params[name].max;
+    const range = document.createElement('input');
+    range.type = 'range';
+    range.value = params[name].value;
+    range.step = params[name].step;
+    range.min = params[name].min;
+    range.max = params[name].max;
+    num.addEventListener('input', () => {
+      params[name].value = parseFloat(num.value);
+      range.value = num.value;
+      updateAndDraw();
+    });
+    range.addEventListener('input', () => {
+      params[name].value = parseFloat(range.value);
+      num.value = range.value;
+      updateAndDraw();
+    });
+    row.appendChild(lbl);
+    row.appendChild(num);
+    row.appendChild(range);
+    paramsDiv.appendChild(row);
+  });
+}
+
+// 更新 equation 顯示
+function setEquationText(lines) {
+  equationLines = lines.slice();
+  eqArea.value = lines.join('\n');
+}
+
+// equation textarea 監聽
+eqArea.addEventListener('input', () => {
+  const lines = eqArea.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  equationLines = lines;
+  updateAndDraw();
+});
+
+// 編譯等式
+function compileEquation() {
+  // 先將每一行處理為 let 宣告，避免在嚴格模式下直接賦值未宣告變數
+  const declarations = equationLines.map(line => {
+    // 換掉 ^
+    const clean = line.replace(/\^/g, '**');
+    const idx = clean.indexOf('=');
+    if (idx < 0) return '';
+    const varName = clean.substring(0, idx).trim();
+    const expr = clean.substring(idx + 1).trim();
+    return `let ${varName} = ${expr}`;
+  }).join('\n');
+  let fnBody = '';
+  fnBody += '"use strict";\n';
+  // 匯入安全函式
+  Object.keys(safeFunctions).forEach(fnName => {
+    fnBody += `const ${fnName} = this.safeFunctions.${fnName};\n`;
+  });
+  // 匯入參數
+  Object.keys(params).forEach(p => {
+    fnBody += `const ${p} = this.params['${p}'].value;\n`;
+  });
+  // 宣告中間變數與 eq
+  fnBody += declarations + '\n';
+  // 回傳 eq
+  fnBody += 'return eq;';
+  try {
+    const f = new Function('v1','v2','v3','v4', fnBody).bind({safeFunctions, params});
+    return f;
+  } catch (e) {
+    console.error('compile error', e);
+    return null;
+  }
+}
+
+// 計算並繪圖
+function updateAndDraw() {
+  if (!dataReady) return;
+  const xKey = xSelect.value;
+  // 決定分組用的變數：除了 xKey 外，其他所有變數皆列入，以便不同勾選顯示不同函數線
+  const groupKeys = ['v1','v2','v3','v4'].filter(k => k !== xKey);
+  // 收集勾選的值
+  const filters = {};
+  const checkboxes = filterContainer.querySelectorAll('input[type="checkbox"]');
+  checkboxes.forEach(cb => {
+    const key = cb.dataset.key;
+    const value = cb.dataset.value;
+    if (!filters[key]) filters[key] = new Set();
+    if (cb.checked) filters[key].add(String(value));
+  });
+  // 篩選符合勾選條件的資料
+  const filtered = csvData.filter(d => {
+    return Object.keys(filters).every(key => {
+      return filters[key].size === 0 || filters[key].has(String(d[key]));
+    });
+  });
+  // 若沒有任何資料則直接清空圖表
+  if (filtered.length === 0) {
+    statText.innerHTML = '<strong>資料量:</strong> 0';
+    badList.innerHTML = '';
+    drawChart(new Map(), xKey);
+    return;
+  }
+  const eqFunc = compileEquation();
+  // 預備 seriesMap：每個分組的 actual 點與預測線
+  const seriesMap = new Map();
+  let maeSum = 0, rmseSum = 0, mapeSum = 0;
+  let count = 0;
+  const badRows10 = [];
+  const badRows5 = [];
+  // 先聚合實際資料點，並統計誤差
+  filtered.forEach(row => {
+    if (!eqFunc) return;
+    const xVal = row[xKey];
+    const fVal = eqFunc(row.v1, row.v2, row.v3, row.v4);
+    const yVal = row.value;
+    if (typeof fVal !== 'number' || isNaN(fVal)) return;
+    // 分組鍵由 groupKeys 組成，包含 v4；每個組合產生一條函數線
+    const groupKey = groupKeys.map(k => k + ':' + row[k]).join(' | ');
+    if (!seriesMap.has(groupKey)) {
+      seriesMap.set(groupKey, {points: [], fPoints: []});
+    }
+    const diff = fVal / yVal - 1;
+    const absDiff = Math.abs(diff);
+    maeSum += Math.abs(fVal - yVal);
+    rmseSum += Math.pow(fVal - yVal, 2);
+    mapeSum += Math.abs(diff);
+    count++;
+    seriesMap.get(groupKey).points.push({x: xVal, y: yVal, f: fVal, diff});
+    if (absDiff > 0.10) {
+      badRows10.push({row, diff});
+    } else if (absDiff > 0.05) {
+      badRows5.push({row, diff});
+    }
+  });
+  // 計算統計指標
+  const mae = count ? (maeSum / count) : 0;
+  const rmse = count ? Math.sqrt(rmseSum / count) : 0;
+  const mape = count ? (mapeSum / count) : 0;
+  statText.innerHTML = `<strong>資料量:</strong> ${count}，<strong>MAE:</strong> ${mae.toFixed(5)}，<strong>RMSE:</strong> ${rmse.toFixed(5)}，<strong>MAPE:</strong> ${(mape*100).toFixed(3)}%`;
+  // 準備超標列表
+  badList.innerHTML = '';
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  ['類別','v1','v2','v3','v4','value','delta'].forEach(h => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  const addRows = (list, label) => {
+    list.forEach(item => {
+      const tr = document.createElement('tr');
+      const cells = [label, item.row.v1, item.row.v2, item.row.v3, item.row.v4, item.row.value, (item.diff*100).toFixed(2)+'%'];
+      cells.forEach(c => {
+        const td = document.createElement('td');
+        td.textContent = c;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  };
+  addRows(badRows10, '>10%');
+  addRows(badRows5, '5-10%');
+  table.appendChild(tbody);
+  badList.appendChild(table);
+  // 準備所有 x 軸值，用於繪製函數線
+  // 取整個 csvData 的唯一 x 值，使函數線跨全域範圍
+  const xValues = Array.from(new Set(csvData.map(d => d[xKey]))).sort((a,b) => a - b);
+  // 計算每個分組的函數預測線
+  seriesMap.forEach((obj, key) => {
+    // 解析分組值為物件
+    const parts = key.split(' | ');
+    const groupVals = {};
+    parts.forEach(part => {
+      const idx = part.indexOf(':');
+      const k = part.substring(0, idx);
+      const v = part.substring(idx+1);
+      // 將數值轉為數值型態（若為字串也保持字串）；
+      // 使用 parseFloat 若可以轉為數字則轉換
+      const num = parseFloat(v);
+      groupVals[k] = isNaN(num) ? v : num;
+    });
+    // 計算函數線每個 x 值對應的 f 值
+    const fPts = [];
+    xValues.forEach(xVal => {
+      // 為每個變數設置值
+      const args = {v1: groupVals.v1, v2: groupVals.v2, v3: groupVals.v3, v4: groupVals.v4};
+      args[xKey] = xVal;
+      const fVal = eqFunc(args.v1, args.v2, args.v3, args.v4);
+      if (typeof fVal === 'number' && !isNaN(fVal)) {
+        fPts.push({x: xVal, f: fVal});
+      }
+    });
+    obj.fPoints = fPts;
+  });
+  drawChart(seriesMap, xKey);
+}
+
+// 繪圖
+function drawChart(seriesMap, xKey) {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  canvas.width = width;
+  canvas.height = height;
+  ctx.clearRect(0, 0, width, height);
+  if (seriesMap.size === 0) {
+    ctx.fillStyle = '#888';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('無資料', width / 2 - 30, height / 2);
+    legendDiv.innerHTML = '';
+    return;
+  }
+  // 計算 x, y 範圍，包含函數線與實際點
+  let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+  seriesMap.forEach(obj => {
+    obj.points.forEach(p => {
+      if (p.x < xMin) xMin = p.x;
+      if (p.x > xMax) xMax = p.x;
+      if (p.y < yMin) yMin = p.y;
+      if (p.y > yMax) yMax = p.y;
+      if (p.f < yMin) yMin = p.f;
+      if (p.f > yMax) yMax = p.f;
+    });
+    obj.fPoints.forEach(fp => {
+      if (fp.x < xMin) xMin = fp.x;
+      if (fp.x > xMax) xMax = fp.x;
+      if (fp.f < yMin) yMin = fp.f;
+      if (fp.f > yMax) yMax = fp.f;
+    });
+  });
+  // 取消無限值
+  if (!isFinite(xMin) || !isFinite(xMax) || !isFinite(yMin) || !isFinite(yMax)) {
+    ctx.fillStyle = '#888';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('無有效資料', width / 2 - 50, height / 2);
+    legendDiv.innerHTML = '';
+    return;
+  }
+  const padding = 40;
+  const xScale = val => padding + (val - xMin) / (xMax - xMin || 1) * (width - 2 * padding);
+  const yScale = val => height - padding - (val - yMin) / (yMax - yMin || 1) * (height - 2 * padding);
+  // 畫格線與軸
+  ctx.strokeStyle = '#ccc';
+  ctx.lineWidth = 1;
+  const yTicks = 5;
+  for (let i = 0; i <= yTicks; i++) {
+    const yVal = yMin + (yMax - yMin) * i / yTicks;
+    const yPos = yScale(yVal);
+    ctx.beginPath(); ctx.moveTo(padding, yPos); ctx.lineTo(width - padding, yPos); ctx.stroke();
+    ctx.fillStyle = '#000'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(yVal.toFixed(2), padding - 4, yPos);
+  }
+  const xTicks = 5;
+  for (let i = 0; i <= xTicks; i++) {
+    const xVal = xMin + (xMax - xMin) * i / xTicks;
+    const xPos = xScale(xVal);
+    ctx.beginPath(); ctx.moveTo(xPos, padding); ctx.lineTo(xPos, height - padding); ctx.stroke();
+    ctx.fillStyle = '#000'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText(xVal.toFixed(2), xPos, height - padding + 2);
+  }
+  // 繪製坐標軸
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(padding, padding); ctx.lineTo(padding, height - padding); ctx.lineTo(width - padding, height - padding); ctx.stroke();
+  // 重繪圖例
+  legendDiv.innerHTML = '';
+  let colorIndex = 0;
+  seriesMap.forEach((obj, key) => {
+    const color = palette[colorIndex % palette.length]; colorIndex++;
+    // 畫函數線（按 x 值排序）
+    const sortedF = obj.fPoints.slice().sort((a, b) => a.x - b.x);
+    ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 2.0;
+    sortedF.forEach((p, i) => {
+      const xPos = xScale(p.x);
+      const yPosF = yScale(p.f);
+      if (i === 0) ctx.moveTo(xPos, yPosF); else ctx.lineTo(xPos, yPosF);
+    });
+    ctx.stroke();
+    // 畫實際資料點
+    obj.points.forEach(p => {
+      const xPos = xScale(p.x);
+      const yPos = yScale(p.y);
+      let fill;
+      const absD = Math.abs(p.diff);
+      if (absD > 0.10) fill = 'rgba(255,64,64,0.6)';
+      else if (absD > 0.05) fill = 'rgba(255,160,64,0.6)';
+      else fill = 'rgba(76,175,80,0.6)';
+      ctx.beginPath(); ctx.arc(xPos, yPos, 4, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.stroke();
+    });
+    // 傳說圖例條目
+    const itemDiv = document.createElement('div'); itemDiv.className = 'series-item';
+    const colorBox = document.createElement('div'); colorBox.className = 'series-color'; colorBox.style.background = color;
+    const span = document.createElement('span'); span.textContent = key;
+    itemDiv.appendChild(colorBox); itemDiv.appendChild(span);
+    legendDiv.appendChild(itemDiv);
+  });
+  // 誤差顏色說明
+  const errSection = document.createElement('div'); errSection.className = 'error-box';
+  [
+    { color: 'rgba(255,64,64,0.6)', label: '>10%' },
+    { color: 'rgba(255,160,64,0.6)', label: '5-10%' },
+    { color: 'rgba(76,175,80,0.6)', label: '<=5%' }
+  ].forEach(item => {
+    const b = document.createElement('div'); b.className = 'color-block'; b.style.background = item.color;
+    const span = document.createElement('span'); span.textContent = item.label; span.style.marginRight = '0.4rem'; span.style.marginLeft = '0.2rem';
+    errSection.appendChild(b); errSection.appendChild(span);
+  });
+  legendDiv.appendChild(errSection);
+}
+
+// 載入內建範例
+document.getElementById('loadSample').addEventListener('click', () => {
+  csvData = parseCSV(builtInCSV);
+  const { params: p, eqLines } = parseTxt(builtInTXT);
+  params = p;
+  setEquationText(eqLines);
+  updateXOptions();
+  buildFilters();
+  buildParams();
+  dataReady = true;
+  updateAndDraw();
+});
+
+// 載入 CSV
+document.getElementById('csvFile').addEventListener('change', evt => {
+  const file = evt.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    csvData = parseCSV(reader.result);
+    updateXOptions();
+    buildFilters();
+    updateAndDraw();
+  };
+  reader.readAsText(file);
+});
+
+// 載入 TXT
+document.getElementById('txtFile').addEventListener('change', evt => {
+  const file = evt.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const { params: p, eqLines } = parseTxt(reader.result);
+    params = p;
+    setEquationText(eqLines);
+    buildParams();
+    updateAndDraw();
+  };
+  reader.readAsText(file);
+});
+
+// X 軸改變
+xSelect.addEventListener('change', () => {
+  buildFilters();
+  updateAndDraw();
+});
+
+// 重新計算按鈕
+recalcBtn.addEventListener('click', () => {
+  updateAndDraw();
+});
+</script>
+</body>
+</html>
