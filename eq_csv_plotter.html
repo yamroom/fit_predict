@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CSV × TXT 方程即時比較／繪圖（單檔版）</title>
+  <style>
+    :root{
+      --bg:#0b1020; --panel:#121a33; --muted:#9aa3b2; --fg:#e6edf6; --accent:#60a5fa;
+      --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --line:#1e2a4a; --grid:#1a2242;
+    }
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--fg);
+      font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Noto Sans TC",Segoe UI,Roboto,Helvetica,Arial;}
+    .wrap{max-width:1200px;margin:32px auto;padding:0 16px;}
+    h1{font-size:22px;margin:0 0 10px}
+    .muted{color:var(--muted)}
+    .grid{display:grid;grid-template-columns:360px 1fr;gap:16px}
+    .card{background:var(--panel);border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.25);padding:14px;}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input[type="file"], select, input[type="text"], textarea, input[type="number"]{
+      width:100%;border:1px solid var(--line);background:#0e1530;color:var(--fg);
+      border-radius:10px;padding:8px 10px;outline:none;
+    }
+    textarea{min-height:100px;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+    .row{display:flex;gap:8px;align-items:center}
+    .row>*{flex:1}
+    .btn{appearance:none;border:0;border-radius:10px;padding:8px 12px;background:var(--accent);color:#081225;font-weight:700;cursor:pointer}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    .seg{display:flex;gap:6px;flex-wrap:wrap}
+    .seg .chip{border:1px solid var(--line);padding:2px 8px;border-radius:999px;font-size:12px;cursor:default}
+    .slider-row{display:grid;grid-template-columns:90px 1fr 90px;gap:8px;align-items:center;margin:8px 0}
+    input[type="range"]{width:100%}
+    .small{font-size:12px}
+    .err{white-space:pre-wrap;color:#fecaca;background:#3b0a0a;border:1px solid #7f1d1d;padding:10px;border-radius:10px}
+    .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+    canvas{width:100%;height:520px;background:#0c142b;border-radius:12px}
+    .legend{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:8px}
+    .dot{display:inline-block;width:11px;height:11px;border-radius:50%}
+    .square{display:inline-block;width:11px;height:11px}
+    .border{border:2px solid #fff;border-radius:50%}
+    .hr{height:1px;background:var(--line);margin:10px 0}
+    details>summary{cursor:pointer;user-select:none}
+    .checkwrap{max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px}
+    .checkbox{display:flex;gap:6px;align-items:center;margin:2px 0}
+    .right{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+    .pill{font:12px ui-monospace,Menlo,Consolas,monospace;background:#0e1530;border:1px solid var(--line);padding:2px 6px;border-radius:6px;color:#ddd}
+    .kbd{font:12px ui-monospace,Menlo,Consolas,monospace;background:#0e1530;border:1px solid var(--line);padding:2px 6px;border-radius:6px;color:#ddd}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CSV × TXT 方程即時比較／繪圖（單檔版）</h1>
+  <p class="muted small">載入 <span class="kbd">.csv</span>（前四欄＝變數，<b>第五欄＝數據值</b>），再載入 <span class="kbd">.txt</span>（含參數、可自定義方程與固定方程）。選 X 軸與篩選值後，即時繪製數據與函數、並以 ±5% / ±10% 不同顏色標示誤差。誤差算法：<span class="pill">(函數值 / 數據值 - 1)</span>。</p>
+
+  <div class="grid">
+    <!-- 左側控制面板 -->
+    <div class="card">
+      <label>載入 .csv（第一列可為標頭；若無則預設欄名 v1,v2,v3,v4,data）</label>
+      <input type="file" id="csvFile" accept=".csv">
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>X 軸（從前三欄中選一個）</label>
+          <select id="xAxis" disabled></select>
+        </div>
+        <div>
+          <label>Y 圖層</label>
+          <div class="seg">
+            <span class="chip"><input type="checkbox" id="showData" checked> 數據 (第5欄)</span>
+            <span class="chip"><input type="checkbox" id="showFunc" checked> 函數值</span>
+            <span class="chip"><input type="checkbox" id="showDiff" checked> 差值線</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="filters" style="margin-top:10px; display:none">
+        <label>篩選（從其餘兩欄的唯一值中勾選）</label>
+        <div class="row">
+          <div>
+            <div class="small muted" id="f1Label">欄位 A</div>
+            <div class="checkwrap" id="f1Box"></div>
+            <div class="right small">
+              <button class="btn" id="f1All">全選</button>
+              <button class="btn" id="f1None">全不選</button>
+            </div>
+          </div>
+          <div>
+            <div class="small muted" id="f2Label">欄位 B</div>
+            <div class="checkwrap" id="f2Box"></div>
+            <div class="right small">
+              <button class="btn" id="f2All">全選</button>
+              <button class="btn" id="f2None">全不選</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+
+      <label>載入 .txt（分區：PARAMS / CUSTOM / FIXED）</label>
+      <input type="file" id="txtFile" accept=".txt">
+
+      <details open style="margin-top:8px">
+        <summary><b>參數滑桿</b>（PARAMS 區域讀入，亦可直接輸入）</summary>
+        <div id="paramSliders"></div>
+      </details>
+
+      <details open style="margin-top:8px">
+        <summary><b>自定義 equation（可編輯）</b></summary>
+        <textarea id="customArea" placeholder="CUSTOM 區域（可使用 CSV 欄名與參數；每行 var = expr；最終可定義 eq 或 eq_custom）"></textarea>
+      </details>
+
+      <details open style="margin-top:8px">
+        <summary><b>固定 equation（唯讀）</b></summary>
+        <textarea id="fixedArea" readonly placeholder="FIXED 區域（不可編輯；每行 var = expr；可定義 eq_fixed 或其他中間量）"></textarea>
+      </details>
+
+      <div class="hr"></div>
+      <div class="small muted">
+        <b>DSL 規則：</b>每行 <span class="kbd">變數 = 表達式</span>；註解以 <span class="kbd">#</span> 開頭。允許運算子 <span class="kbd">+ - * / % **</span>、括號、單元 <span class="kbd">+/-</span>；函式白名單：
+        <span class="kbd">clamp(x,lo,hi)</span>、<span class="kbd">inv(z)</span>、<span class="kbd">min(a,b)</span>、<span class="kbd">max(a,b)</span>、<span class="kbd">abs</span>、<span class="kbd">sqrt</span>、<span class="kbd">log</span>、<span class="kbd">exp</span>、<span class="kbd">pow(a,b)</span>。
+        若檔中未明確定義 <span class="kbd">eq = ...</span>，則使用 <span class="kbd">eq = eq_custom + eq_fixed</span>（存在者加總；單邊存在則採用單邊）。
+        PARAMS 區域允許範圍標註：<span class="kbd">a = 5 [0,10;0.1]</span>（min,max;step）。
+      </div>
+    </div>
+
+    <!-- 右側繪圖區 -->
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="small">
+          <div>CSV 狀態：<span id="csvStatus" class="muted">未載入</span></div>
+          <div>TXT 狀態：<span id="txtStatus" class="muted">未載入</span></div>
+        </div>
+        <div class="small">
+          <span class="ok">|誤差| ≤ 5%</span>、<span class="warn">5% &lt; |誤差| ≤ 10%</span>、<span class="bad">|誤差| &gt; 10%</span>
+        </div>
+      </div>
+      <div class="hr"></div>
+
+      <canvas id="chart" width="1000" height="520"></canvas>
+      <div class="legend small">
+        <span><span class="dot" style="background:#9ecbff"></span> 數據點</span>
+        <span><span class="square" style="background:#a7f3d0"></span> 函數點</span>
+        <span><span class="dot border" style="border-color:#fbbf24"></span> |誤差|&gt;5%</span>
+        <span><span class="dot border" style="border-color:#ef4444"></span> |誤差|&gt;10%</span>
+      </div>
+      <div id="stats" class="small muted" style="margin-top:6px">-</div>
+      <div id="error" class="err" style="display:none;margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ======== 簡易工具 ========
+  const $ = id => document.getElementById(id);
+  const fmt = x => Number(x).toPrecision(10).replace(/\\.0+$/,'').replace(/\\.$/,'');
+  const clamp = (x,lo,hi) => Math.min(Math.max(x,lo),hi);
+
+  // ======== CSV 載入與解析 ========
+  let dataRows = []; // {v1,v2,v3,v4,data} or header-based
+  let headers = ["v1","v2","v3","v4","data"]; // 讀到後會更新
+  let numericCols = [true,true,true,true,true];
+
+  function parseCSV(text){
+    // 輕量 CSV 解析：支援逗號、雙引號、換行
+    const rows = [];
+    let i=0, field="", row=[], inQuotes=false;
+    while(i<=text.length){
+      const c = text[i] || '\\n';
+      if(inQuotes){
+        if(c=='"'){
+          if(text[i+1]=='"'){ field+='"'; i++; }
+          else { inQuotes=false; }
+        }else{
+          field+=c;
+        }
+      }else{
+        if(c=='"'){ inQuotes=true; }
+        else if(c==',' ){ row.push(field); field=""; }
+        else if(c=='\\n' || c=='\\r'){ if(c=='\\r' && text[i+1]=='\\n'){ i++; } row.push(field); rows.push(row); field=""; row=[]; }
+        else { field+=c; }
+      }
+      i++;
+    }
+    // 去空列
+    return rows.filter(r => r.length && r.some(v => String(v).trim()!==""));
+  }
+
+  function tryNumber(v){ const n = Number(v); return isFinite(n) ? n : v; }
+
+  function loadCSVFile(file){
+    const fr = new FileReader();
+    fr.onload = () => {
+      try{
+        const rows = parseCSV(String(fr.result||""));
+        if(rows.length===0) throw new Error("CSV 為空");
+        // 判斷第一列是否表頭（有任一非數字）
+        const first = rows[0];
+        const hasHeader = first.some(v => !isFinite(Number(String(v).trim())));
+        if(hasHeader){
+          headers = first.map((h,i)=> String(h||"").trim() || `col${i+1}`);
+          rows.shift();
+        }else{
+          headers = ["v1","v2","v3","v4","data"];
+        }
+        if(headers.length < 5) throw new Error("需要至少 5 欄（前四欄為變數，第五欄為數據值）");
+        // 僅取前 5 欄
+        headers = [headers[0], headers[1], headers[2], headers[3], headers[4]];
+        dataRows = rows.map(r => {
+          const o = {};
+          for(let i=0;i<5;i++){
+            const key = headers[i] || `col${i+1}`;
+            o[key] = tryNumber(r[i]);
+          }
+          return o;
+        }).filter(o => isFinite(Number(o[headers[0]])) && isFinite(Number(o[headers[1]])) &&
+                       isFinite(Number(o[headers[2]])) && isFinite(Number(o[headers[3]])) &&
+                       isFinite(Number(o[headers[4]])));
+        if(dataRows.length===0) throw new Error("前五欄解析後沒有可用的數值資料列");
+        $("csvStatus").textContent = `已載入 ${file.name}（有效列 ${dataRows.length}）`;
+        setupAxisAndFilters();
+        redraw();
+      }catch(err){
+        showError(err);
+      }
+    };
+    fr.readAsText(file, 'utf-8');
+  }
+
+  // ======== TXT / DSL 解析 ========
+  // 區塊標記：# --- PARAMS --- / # --- CUSTOM --- / # --- FIXED ---
+  let params = {};      // {name:{value,min,max,step,default}}
+  let customLines = []; // [ [var, expr], ... ]
+  let fixedLines  = []; // [ [var, expr], ... ]
+
+  $("txtFile").addEventListener("change", e=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    const fr = new FileReader();
+    fr.onload = ()=>{
+      try{
+        parseTXT(String(fr.result||""));
+        $("txtStatus").textContent = `已載入 ${f.name}（參數 ${Object.keys(params).length}）`;
+        renderParamSliders();
+        $("customArea").value = pairsToText(customLines);
+        $("fixedArea").value = pairsToText(fixedLines);
+        redraw();
+      }catch(err){
+        showError(err);
+      }
+    };
+    fr.readAsText(f, 'utf-8');
+  });
+
+  function parseTXT(text){
+    params = {}; customLines = []; fixedLines = [];
+    const lines = text.split(/\\r?\\n/);
+    let section = null; // "PARAMS" | "CUSTOM" | "FIXED"
+    for(const raw of lines){
+      const line = raw.trim();
+      if(!line || line.startsWith("#")) continue;
+      const upper = line.toUpperCase();
+      if(upper.includes("PARAMS") && line.replace(/\\s+/g,'').includes("---PARAMS---")){ section="PARAMS"; continue; }
+      if(upper.includes("CUSTOM") && line.replace(/\\s+/g,'').includes("---CUSTOM---")){ section="CUSTOM"; continue; }
+      if(upper.includes("FIXED")  && line.replace(/\\s+/g,'').includes("---FIXED---")) { section="FIXED";  continue; }
+      if(!section) continue; // 未進入區域不處理
+
+      if(section==="PARAMS"){
+        // 支援語法：a = 5 [0,10;0.1]  或  a = 5
+        const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*([^\\[#]+)(?:\\s*\\[([^\\]]+)\\])?\\s*$/);
+        if(!m) continue;
+        const name = m[1];
+        const defVal = Number(m[2].trim());
+        if(!isFinite(defVal)) throw new Error(`PARAMS '${name}' 不是數值：${m[2]}`);
+        let min = null, max = null, step = 0.01;
+        if(m[3]){
+          const part = m[3].split(/[;,]/).map(s=>s.trim()).filter(Boolean);
+          if(part.length>=2){ min = Number(part[0]); max = Number(part[1]); }
+          if(part.length>=3){ step = Number(part[2]); }
+        }
+        if(min==null || max==null){
+          // 預設範圍：以預設值為中心 +- 10*|defVal| （對 0 則 [-10,10]）
+          const span = Math.max(10, Math.abs(defVal)*10);
+          min = defVal - span, max = defVal + span;
+        }
+        params[name] = { value:defVal, min, max, step: step||0.01, default:defVal };
+      }else{
+        // CUSTOM / FIXED -> 解析 "var = expr"
+        const eq = line.indexOf("=");
+        if(eq<0) continue;
+        const left = line.slice(0,eq).trim();
+        const right = line.slice(eq+1).trim();
+        if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(left)) throw new Error(`變數名稱不合法：${left}`);
+        (section==="CUSTOM" ? customLines : fixedLines).push([left,right]);
+      }
+    }
+  }
+
+  function pairsToText(pairs){
+    return pairs.map(([v,e])=> `${v} = ${e}`).join("\\n");
+  }
+
+  // ======== 方程 DSL Parser（遞迴下降，無 eval） ========
+  // 允許：+ - * / % **，括號，單元 +/-；函式白名單：clamp, inv, min, max, abs, sqrt, log, exp, pow
+  class Parser {
+    constructor(src){ this.s = src; this.i=0; this.n = src.length; }
+    peek(){ return this.s[this.i] || ""; }
+    next(){ return this.s[this.i++] || ""; }
+    eof(){ return this.i>=this.n; }
+    skip(){ while(!this.eof() && /\\s/.test(this.peek())) this.i++; }
+    match(ch){ this.skip(); if(this.s.startsWith(ch,this.i)){ this.i+=ch.length; return true;} return false; }
+    expect(ch,msg){ if(!this.match(ch)) throw new Error(msg||`預期 '${ch}'`); }
+    number(){
+      this.skip(); const start=this.i; let saw=false;
+      if(this.peek()==='+'||this.peek()==='-'){ this.next(); }
+      while(/\\d/.test(this.peek())){ this.next(); saw=true; }
+      if(this.peek()==='.'){ this.next(); while(/\\d/.test(this.peek())){ this.next(); saw=true; } }
+      if(this.peek()==='e'||this.peek()==='E'){ const save=this.i; this.next(); if(this.peek()==='+'||this.peek()==='-') this.next(); let sawExp=false; while(/\\d/.test(this.peek())){ this.next(); sawExp=true; } if(!sawExp) this.i=save; }
+      if(!saw) throw new Error("數字語法錯誤");
+      return Number(this.s.slice(start,this.i));
+    }
+    ident(){
+      this.skip(); if(!/[A-Za-z_]/.test(this.peek())) throw new Error("變數/函式名稱必須以字母或 _ 開頭");
+      const start=this.i; this.next(); while(/[A-Za-z0-9_]/.test(this.peek())) this.next();
+      return this.s.slice(start,this.i);
+    }
+  }
+  function compileExpr(src){
+    const p = new Parser(src);
+    function parseExpression(){
+      let left = parseTerm();
+      for(;;){
+        p.skip();
+        if(p.match("+")) left = {t:"+",a:left,b:parseTerm()};
+        else if(p.match("-")) left = {t:"-",a:left,b:parseTerm()};
+        else break;
+      }
+      return left;
+    }
+    function parseTerm(){
+      let left = parsePower();
+      for(;;){
+        p.skip();
+        if(p.match("*")) left = {t:"*",a:left,b:parsePower()};
+        else if(p.match("/")) left = {t:"/",a:left,b:parsePower()};
+        else if(p.match("%")) left = {t:"%",a:left,b:parsePower()};
+        else break;
+      }
+      return left;
+    }
+    function parsePower(){
+      let left = parseUnary();
+      p.skip();
+      if(p.match("**")){
+        left = {t:"**",a:left,b:parsePower()}; // 右結合
+      }
+      return left;
+    }
+    function parseUnary(){
+      p.skip();
+      if(p.match("+")) return {t:"u+",a:parseUnary()};
+      if(p.match("-")) return {t:"u-",a:parseUnary()};
+      return parsePrimary();
+    }
+    function parsePrimary(){
+      p.skip();
+      if(p.match("(")){ const v = parseExpression(); p.expect(")","缺少右括號 )"); return v; }
+      if(/[0-9.+-]/.test(p.peek())){ const num = p.number(); return {t:"num",v:num}; }
+      if(/[A-Za-z_]/.test(p.peek())){
+        const name = p.ident();
+        p.skip();
+        if(p.match("(")){ // function call
+          const args=[];
+          if(!p.match(")")){
+            for(;;){
+              args.push(parseExpression());
+              if(p.match(")")) break;
+              p.expect(",","函式參數需以逗號分隔");
+            }
+          }
+          if(!["clamp","inv","min","max","abs","sqrt","log","exp","pow"].includes(name)) throw new Error(`函式不被允許: ${name}`);
+          return {t:"call",name, args};
+        }else{
+          return {t:"var",name};
+        }
+      }
+      throw new Error("語法錯誤：無法解析的項");
+    }
+    const ast = parseExpression();
+    p.skip(); if(!p.eof()) throw new Error("多餘字元於表達式結尾");
+    // 回傳 evaluator(env) -> number
+    function evalNode(n, env){
+      switch(n.t){
+        case "num": return n.v;
+        case "var": {
+          if(n.name in env) return env[n.name];
+          if(n.name==="pi") return Math.PI;
+          if(n.name==="e") return Math.E;
+          throw new Error(`未定義變數: ${n.name}`);
+        }
+        case "u+": return +evalNode(n.a, env);
+        case "u-": return -evalNode(n.a, env);
+        case "+": return evalNode(n.a, env) + evalNode(n.b, env);
+        case "-": return evalNode(n.a, env) - evalNode(n.b, env);
+        case "*": return evalNode(n.a, env) * evalNode(n.b, env);
+        case "/": return evalNode(n.a, env) / evalNode(n.b, env);
+        case "%": return evalNode(n.a, env) % evalNode(n.b, env);
+        case "**": return Math.pow(evalNode(n.a, env), evalNode(n.b, env));
+        case "call": {
+          const A = n.args.map(a=>evalNode(a, env));
+          switch(n.name){
+            case "clamp": return clamp(A[0], A[1], A[2]);
+            case "inv":   return 1/ A[0];
+            case "min":   return Math.min(A[0], A[1]);
+            case "max":   return Math.max(A[0], A[1]);
+            case "abs":   return Math.abs(A[0]);
+            case "sqrt":  return Math.sqrt(A[0]);
+            case "log":   return Math.log(A[0]);
+            case "exp":   return Math.exp(A[0]);
+            case "pow":   return Math.pow(A[0], A[1]);
+          }
+        }
+      }
+    }
+    return (env)=> evalNode(ast, env);
+  }
+
+  function evalAssignments(pairs, env){
+    // 依序求值；每行 var = expr
+    for(const [v,e] of pairs){
+      const fn = compileExpr(e);
+      env[v] = fn(env);
+    }
+  }
+
+  // ======== 參數滑桿渲染 ========
+  function renderParamSliders(){
+    const box = $("paramSliders");
+    box.innerHTML = "";
+    for(const [name,p] of Object.entries(params)){
+      const row = document.createElement("div");
+      row.className = "slider-row";
+      const label = document.createElement("div");
+      label.innerHTML = `<div class="small muted">${name}</div><div class="pill" id="pill_${name}">${fmt(p.value)}</div>`;
+      const slider = document.createElement("input");
+      slider.type="range"; slider.min=p.min; slider.max=p.max; slider.step=p.step; slider.value=p.value; slider.id = "s_"+name;
+      const num = document.createElement("input");
+      num.type="number"; num.step=p.step; num.value=p.value; num.id = "n_"+name;
+      row.appendChild(label); row.appendChild(slider); row.appendChild(num);
+      box.appendChild(row);
+      const sync = (v)=>{ params[name].value = Number(v); $("pill_"+name).textContent = fmt(v); slider.value = String(v); num.value = String(v); redraw(); };
+      slider.addEventListener("input", e=> sync(e.target.value));
+      num.addEventListener("change", e=> {
+        let v = Number(e.target.value);
+        if(!isFinite(v)) v = params[name].default;
+        v = Math.max(p.min, Math.min(p.max, v));
+        sync(v);
+      });
+    }
+  }
+
+  // ======== X 軸與篩選 UI ========
+  const xAxisSel = $("xAxis");
+  const f1Box = $("f1Box"), f2Box = $("f2Box");
+  const f1Label = $("f1Label"), f2Label = $("f2Label");
+
+  $("csvFile").addEventListener("change", e=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    loadCSVFile(f);
+  });
+
+  function setupAxisAndFilters(){
+    // X 軸可選：headers[0..2]
+    xAxisSel.innerHTML = "";
+    for(let i=0;i<3;i++){
+      const opt = document.createElement("option");
+      opt.value = headers[i]; opt.textContent = headers[i];
+      xAxisSel.appendChild(opt);
+    }
+    xAxisSel.disabled = false;
+    xAxisSel.value = headers[0];
+    rebuildFilters();
+  }
+
+  xAxisSel.addEventListener("change", ()=>{ rebuildFilters(); redraw(); });
+
+  function uniqueValues(col){
+    const s = new Set();
+    for(const r of dataRows){ s.add(String(r[col])); }
+    // 嘗試轉回數字排序
+    const arr = Array.from(s);
+    const nums = arr.map(x=>Number(x));
+    if(nums.every(n=>isFinite(n))){
+      return nums.sort((a,b)=>a-b).map(n=> String(n));
+    }
+    return arr.sort();
+  }
+
+  function rebuildFilters(){
+    if(dataRows.length===0) return;
+    // 其餘兩欄
+    const x = xAxisSel.value;
+    const other = headers.slice(0,3).filter(h => h!==x);
+    const [c1, c2] = other;
+    f1Label.textContent = c1; f2Label.textContent = c2;
+    const v1 = uniqueValues(c1), v2 = uniqueValues(c2);
+    f1Box.innerHTML = ""; f2Box.innerHTML = "";
+    for(const v of v1){
+      const id = "f1_"+v.replace(/[^A-Za-z0-9_.-]/g,'_');
+      const div = document.createElement("div"); div.className = "checkbox";
+      div.innerHTML = `<input type="checkbox" id="${id}" data-col="${c1}" data-val="${v}" checked> <label for="${id}">${v}</label>`;
+      f1Box.appendChild(div);
+    }
+    for(const v of v2){
+      const id = "f2_"+v.replace(/[^A-Za-z0-9_.-]/g,'_');
+      const div = document.createElement("div"); div.className = "checkbox";
+      div.innerHTML = `<input type="checkbox" id="${id}" data-col="${c2}" data-val="${v}" checked> <label for="${id}">${v}</label>`;
+      f2Box.appendChild(div);
+    }
+    $("filters").style.display = "block";
+    // 綁定全選/全不選
+    $("f1All").onclick = ()=>{ f1Box.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.checked=true); redraw(); };
+    $("f1None").onclick= ()=>{ f1Box.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.checked=false); redraw(); };
+    $("f2All").onclick = ()=>{ f2Box.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.checked=true); redraw(); };
+    $("f2None").onclick= ()=>{ f2Box.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.checked=false); redraw(); };
+    // 變更即重畫
+    f1Box.querySelectorAll("input[type=checkbox]").forEach(cb=> cb.addEventListener("change", redraw));
+    f2Box.querySelectorAll("input[type=checkbox]").forEach(cb=> cb.addEventListener("change", redraw));
+  }
+
+  // ======== 產生 env 並評估 eq ========
+  function buildEnvFromRow(r){
+    const env = {};
+    // CSV 變數：前四欄
+    env[headers[0]] = Number(r[headers[0]]);
+    env[headers[1]] = Number(r[headers[1]]);
+    env[headers[2]] = Number(r[headers[2]]);
+    env[headers[3]] = Number(r[headers[3]]);
+    // 參數
+    for(const [k,p] of Object.entries(params)) env[k] = Number(p.value);
+    // 函式常數
+    env["pi"] = Math.PI; env["e"] = Math.E;
+    return env;
+  }
+
+  function linesFromText(text){
+    const pairs = [];
+    const lines = text.split(/\\r?\\n/);
+    for(const raw of lines){
+      const s = raw.trim();
+      if(!s || s.startsWith("#")) continue;
+      const eq = s.indexOf("=");
+      if(eq<0) continue;
+      const left = s.slice(0,eq).trim();
+      const right= s.slice(eq+1).trim();
+      if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(left)) throw new Error(`變數名稱不合法：${left}`);
+      pairs.push([left,right]);
+    }
+    return pairs;
+  }
+
+  function computeEqForRow(r){
+    // 固定 + 自定義（自定義採用當前 textarea 內容）
+    const fixedPairs  = linesFromText($("fixedArea").value);
+    const customPairs = linesFromText($("customArea").value);
+    const env = buildEnvFromRow(r);
+    // 先算固定
+    evalAssignments(fixedPairs, env);
+    // 再算自定義
+    evalAssignments(customPairs, env);
+    // 組合規則
+    let hasEq = ("eq" in env);
+    if(hasEq) return Number(env["eq"]);
+    const eFix = ("eq_fixed" in env) ? Number(env["eq_fixed"]) : null;
+    const eCus = ("eq_custom" in env) ? Number(env["eq_custom"]) : null;
+    if(eFix==null && eCus==null) throw new Error("找不到 eq、eq_fixed 或 eq_custom，請在 TXT 中至少定義其中之一，或明確定義 eq");
+    if(eFix!=null && eCus!=null) return eFix + eCus;
+    return (eFix!=null) ? eFix : eCus;
+  }
+
+  // ======== 畫布繪圖 ========
+  const canvas = $("chart");
+  const ctx = canvas.getContext("2d");
+
+  function computeFiltered(){
+    if(dataRows.length===0) return [];
+    const x = xAxisSel.value;
+    const others = headers.slice(0,3).filter(h => h!==x);
+    const [c1, c2] = others;
+    const sel1 = new Set(Array.from(f1Box.querySelectorAll("input[type=checkbox]"))
+                  .filter(cb=>cb.checked).map(cb=>cb.getAttribute("data-val")));
+    const sel2 = new Set(Array.from(f2Box.querySelectorAll("input[type=checkbox]"))
+                  .filter(cb=>cb.checked).map(cb=>cb.getAttribute("data-val")));
+    const out = [];
+    for(const r of dataRows){
+      const v1 = String(r[c1]), v2 = String(r[c2]);
+      if(sel1.has(v1) && sel2.has(v2)){
+        out.push(r);
+      }
+    }
+    return out;
+  }
+
+  function getExtents(rows, xKey, yKey, yPred){
+    let xmin=+Infinity, xmax=-Infinity, ymin=+Infinity, ymax=-Infinity;
+    for(let i=0;i<rows.length;i++){
+      const rx = Number(rows[i][xKey]);
+      const dy = Number(rows[i][yKey]);
+      const fy = yPred ? Number(yPred[i]) : null;
+      if(isFinite(rx)){ xmin=Math.min(xmin,rx); xmax=Math.max(xmax,rx); }
+      if(isFinite(dy)){ ymin=Math.min(ymin,dy); ymax=Math.max(ymax,dy); }
+      if(fy!=null && isFinite(fy)){ ymin=Math.min(ymin,fy); ymax=Math.max(ymax,fy); }
+    }
+    if(!isFinite(xmin)||!isFinite(xmax)) xmin=0, xmax=1;
+    if(!isFinite(ymin)||!isFinite(ymax)) ymin=0, ymax=1;
+    if(xmin===xmax){ xmin-=1; xmax+=1; }
+    if(ymin===ymax){ ymin-=1; ymax+=1; }
+    // padding
+    const xr = xmax-xmin, yr=ymax-ymin;
+    return { xmin:xmin-0.05*xr, xmax:xmax+0.05*xr, ymin:ymin-0.1*yr, ymax:ymax+0.1*yr };
+  }
+
+  function project(v, vmin, vmax, minPx, maxPx){
+    if(vmax===vmin) return (minPx+maxPx)/2;
+    return minPx + ( (v - vmin) / (vmax - vmin) ) * (maxPx - minPx);
+  }
+
+  function drawAxes(ext){
+    const padL=60, padR=20, padT=20, padB=50;
+    const W = canvas.width, H=canvas.height;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle="#0c142b";
+    ctx.fillRect(0,0,W,H);
+
+    // grid
+    ctx.strokeStyle = "#1a2242"; ctx.lineWidth=1;
+    const gx=6, gy=5;
+    for(let i=0;i<=gx;i++){
+      const x = project(i/gx, 0,1, padL, W-padR);
+      ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,H-padB); ctx.stroke();
+    }
+    for(let i=0;i<=gy;i++){
+      const y = project(i/gy, 0,1, H-padB, padT);
+      ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
+    }
+
+    // axes
+    ctx.strokeStyle = "#334155"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,H-padB); ctx.lineTo(W-padR,H-padB); ctx.stroke();
+
+    return {padL,padR,padT,padB,W,H};
+  }
+
+  function draw(){
+    const rows = computeFiltered();
+    const xKey = xAxisSel.value;
+    const yKey = headers[4]; // data column
+    const showData = $("showData").checked;
+    const showFunc = $("showFunc").checked;
+    const showDiff = $("showDiff").checked;
+
+    // 預測 y
+    let yPred = [];
+    let errAbs = [];
+    let errRaw = [];
+    let bad10=0, warn5=0;
+    let failed = 0;
+    for(const r of rows){
+      try{
+        const f = computeEqForRow(r);
+        yPred.push(f);
+        const e = Number(f)/Number(r[yKey]) - 1;
+        errRaw.push(e);
+        const ae = Math.abs(e);
+        errAbs.push(ae);
+        if(ae>0.10) bad10++; else if(ae>0.05) warn5++;
+      }catch(err){
+        yPred.push(NaN); errAbs.push(NaN); errRaw.push(NaN); failed++;
+      }
+    }
+
+    const ext = getExtents(rows, xKey, yKey, yPred);
+    const {padL,padR,padT,padB,W,H} = drawAxes(ext);
+
+    function X(v){ return project(v, ext.xmin, ext.xmax, padL, W-padR); }
+    function Y(v){ return project(v, ext.ymin, ext.ymax, H-padB, padT); }
+
+    // ticks
+    ctx.fillStyle = "#94a3b8"; ctx.font = "12px ui-sans-serif";
+    function niceTicks(min,max,steps){
+      const span = max-min;
+      const step = Math.pow(10, Math.floor(Math.log10(span/steps)));
+      const err = steps*step/span;
+      let mult = 1;
+      if(err<=0.5) mult=2;
+      else if(err<=0.25) mult=5;
+      const tick = mult*step;
+      const t0 = Math.ceil(min/tick)*tick;
+      const arr=[]; for(let t=t0; t<=max; t+=tick) arr.push(t);
+      return arr;
+    }
+    const xt = niceTicks(ext.xmin,ext.xmax,6);
+    const yt = niceTicks(ext.ymin,ext.ymax,5);
+    ctx.textAlign="center"; ctx.textBaseline="top";
+    for(const t of xt){
+      const x = X(t);
+      ctx.fillText(String(+t.toPrecision(6)), x, H-padB+6);
+    }
+    ctx.textAlign="right"; ctx.textBaseline="middle";
+    for(const t of yt){
+      const y = Y(t);
+      ctx.fillText(String(+t.toPrecision(6)), padL-6, y);
+    }
+    // axis labels
+    ctx.textAlign="center"; ctx.textBaseline="top";
+    ctx.fillText(xKey, (padL+W-padR)/2, H-30);
+    ctx.save(); ctx.translate(18,(padT+H-padB)/2); ctx.rotate(-Math.PI/2);
+    ctx.textAlign="center"; ctx.textBaseline="bottom"; ctx.fillText(yKey, 0, 0); ctx.restore();
+
+    // draw diff lines
+    if(showDiff){
+      ctx.strokeStyle = "#64748b"; ctx.lineWidth=1;
+      for(let i=0;i<rows.length;i++){
+        if(!isFinite(yPred[i])) continue;
+        const x = X(Number(rows[i][xKey]));
+        const y1= Y(Number(rows[i][yKey]));
+        const y2= Y(Number(yPred[i]));
+        ctx.beginPath(); ctx.moveTo(x,y1); ctx.lineTo(x,y2); ctx.stroke();
+      }
+    }
+
+    // draw data points
+    if(showData){
+      ctx.fillStyle = "#9ecbff";
+      for(let i=0;i<rows.length;i++){
+        const x = X(Number(rows[i][xKey]));
+        const y = Y(Number(rows[i][yKey]));
+        ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill();
+        if(errAbs[i]>0.10 || errAbs[i]>0.05){
+          ctx.strokeStyle = (errAbs[i]>0.10 ? "#ef4444" : "#fbbf24"); ctx.lineWidth=2;
+          ctx.beginPath(); ctx.arc(x,y,5,0,Math.PI*2); ctx.stroke();
+        }
+      }
+    }
+    // draw func points
+    if(showFunc){
+      ctx.fillStyle = "#a7f3d0";
+      for(let i=0;i<rows.length;i++){
+        if(!isFinite(yPred[i])) continue;
+        const x = X(Number(rows[i][xKey]));
+        const y = Y(Number(yPred[i]));
+        // square
+        ctx.fillRect(x-3,y-3,6,6);
+      }
+    }
+
+    // stats
+    $("stats").textContent = `目前顯示 ${rows.length} 筆；|誤差|>10%：${bad10}，5~10%：${warn5}，失敗：${failed}`;
+  }
+
+  function redraw(){
+    try{
+      $("error").style.display="none"; $("error").textContent="";
+      if(dataRows.length===0) { ctx.clearRect(0,0,canvas.width,canvas.height); return; }
+      draw();
+    }catch(err){
+      showError(err);
+    }
+  }
+
+  function showError(err){
+    $("error").style.display="block";
+    $("error").textContent = String(err.message || err);
+  }
+
+  // 初始狀態／基本交互
+  $("customArea").addEventListener("input", redraw);
+  $("showData").addEventListener("change", redraw);
+  $("showFunc").addEventListener("change", redraw);
+  $("showDiff").addEventListener("change", redraw);
+
+  // Demo 預設：放一個簡單 CUSTOM/FIXED 例子（可被 .txt 覆蓋）
+  (function seedDemo(){
+    // 預設參數
+    params = { a:{value:5,min:0,max:10,step:0.1,default:5},
+               b:{value:2,min:0,max:10,step:0.1,default:2},
+               c:{value:-7,min:-20,max:20,step:0.1,default:-7} };
+    renderParamSliders();
+    $("customArea").value =
+`# 可編：使用 CSV 欄名與參數；最後可定義 eq 或 eq_custom
+aa = inv(clamp(v1, 0.2, 0.3)) - inv(0.2)
+bb = inv(clamp(v2, 0.3, 0.4)) - inv(0.3)
+eq_custom = c + b*bb + a*aa`;
+    $("fixedArea").value =
+`# 不可編：固定補充方程（可留空）
+eq_fixed = 0`;
+  })();
+
+  // 若使用者未載入 CSV，也可手動建立測試資料（開發用）
+  // 使用者載入 CSV 後這些會被覆蓋
+  (function seedCSV(){
+    const demo = `v1,v2,v3,v4,data
+0.1,0.3,1,0,2.1
+0.2,0.3,1,0,2.0
+0.25,0.35,1,0,1.6
+0.28,0.35,1,0,1.4
+0.35,0.35,1,0,1.2
+0.5,0.35,1,0,1.1
+0.8,0.4,1,0,1.05`;
+    const blob = new Blob([demo], {type:"text/csv"});
+    const f = new File([blob], "demo.csv", {type:"text/csv"});
+    loadCSVFile(f);
+  })();
+
+})();</script>
+</body>
+</html>
