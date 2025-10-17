@@ -1,0 +1,978 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>多條函數線方程比對視覺化</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0b1020;
+      color: #e5e7eb;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+      overflow: hidden;
+    }
+    /* 控制區域 */
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.5rem;
+      background: #111827;
+      flex-wrap: wrap;
+    }
+    #controls h1 {
+      margin: 0;
+      font-size: 1.25rem;
+      color: #60a5fa;
+    }
+    #controls label {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.875rem;
+    }
+    #controls input[type="file"] {
+      color: #e5e7eb;
+      background: #1f2937;
+      border: 1px solid #374151;
+      padding: 0.25rem;
+    }
+    #controls select, #controls button {
+      background: #1f2937;
+      color: #e5e7eb;
+      border: 1px solid #374151;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      /* 增加最小寬度，讓下拉選單更容易點擊 */
+      min-width: 70px;
+    }
+    #controls button:hover {
+      background: #374151;
+    }
+    /* 設定面板 */
+    #settingsPanel {
+      position: fixed;
+      top: 2.75rem;
+      right: 0;
+      width: 280px;
+      max-height: calc(100vh - 3rem);
+      overflow-y: auto;
+      background: #1f2937;
+      border-left: 1px solid #374151;
+      padding: 0.5rem;
+      transform: translateX(100%);
+      transition: transform 0.3s ease-in-out;
+      z-index: 10;
+    }
+    #settingsPanel.open {
+      transform: translateX(0);
+    }
+    #settingsPanel h2 {
+      margin-top: 0;
+      font-size: 1rem;
+      color: #60a5fa;
+    }
+    .section {
+      margin-bottom: 1rem;
+    }
+    .section label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+    .section input[type="range"] {
+      width: 100%;
+    }
+    .section input[type="number"] {
+      width: 60px;
+      background: #111827;
+      border: 1px solid #374151;
+      color: #e5e7eb;
+    }
+    .section textarea {
+      width: 100%;
+      min-height: 120px;
+      background: #111827;
+      color: #e5e7eb;
+      border: 1px solid #374151;
+      font-family: monospace;
+      font-size: 0.8rem;
+    }
+    .checkbox-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+    }
+    .checkbox-group label {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.8rem;
+    }
+    .checkbox-group input[type="checkbox"] {
+      accent-color: #60a5fa;
+    }
+    /* 繪圖區 */
+    #chartContainer {
+      position: absolute;
+      top: 2.75rem;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      overflow: hidden;
+    }
+    #chartCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #legend {
+      position: fixed;
+      bottom: 0.5rem;
+      left: 0.5rem;
+      background: rgba(15, 23, 42, 0.9);
+      padding: 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      max-width: 40%;
+      overflow-y: auto;
+    }
+    #legend .row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 0.25rem;
+      gap: 0.25rem;
+    }
+    #legend canvas {
+      border: 1px solid #374151;
+    }
+    #message {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #9ca3af;
+      font-size: 1rem;
+      text-align: center;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <h1>多函數線方程比對視覺化</h1>
+    <label>CSV
+      <input type="file" id="csvFile" accept=".csv" />
+    </label>
+    <label>TXT
+      <input type="file" id="txtFile" accept=".txt" />
+    </label>
+    <button id="exampleA" title="載入範例 A">示例 A</button>
+    <button id="exampleB" title="載入範例 B">示例 B</button>
+    <label>X 軸
+      <select id="xSelect"></select>
+    </label>
+    <button id="toggleSettings">設定</button>
+  </div>
+  <div id="settingsPanel">
+    <h2>設定</h2>
+    <div id="filterSection" class="section"></div>
+    <div id="paramSection" class="section"></div>
+    <div id="equationSection" class="section">
+      <label for="equationInput">方程式編輯 (不可留空，必須包含 eq=...)</label>
+      <textarea id="equationInput"></textarea>
+      <button id="applyEquation">套用方程</button>
+    </div>
+  </div>
+  <div id="chartContainer">
+    <canvas id="chartCanvas"></canvas>
+    <div id="message"></div>
+    <div id="legend"></div>
+  </div>
+  <script>
+  // Example datasets embedded as strings
+  const exampleAData = `v1,v2,v3,v4,value\n0.1,0,0,31.403935408357594,-7.2987317818\n0.10816326530612246,1,1,28.772030269246407,-6.613613395\n0.1163265306122449,1,1,39.767476761184525,-7.3951259572\n0.12448979591836735,0,1,22.04089621496056,-7.7764767558\n0.1326530612244898,1,1,24.177535121896696,-6.5779052811\n0.14081632653061227,1,0,23.226190357699924,-7.1279443218\n0.1489795918367347,1,1,33.06216650930797,-7.1546304445\n0.15714285714285714,1,0,25.065832050795642,-7.1213832017\n0.1653061224489796,1,0,29.326215457126125,-6.5347771428\n0.17346938775510207,1,1,24.888511840032056,-7.7606183393\n0.1816326530612245,1,1,23.179391672910395,-6.9111706361\n0.18979591836734694,0,0,22.207502823286102,-7.5819665698\n0.1979591836734694,0,1,33.126591789305465,-7.3351251825\n0.20612244897959187,1,0,22.763659026972277,-7.3661679895\n0.2142857142857143,0,1,23.93164723360107,-9.3193661316\n0.22244897959183674,0,0,27.37450341321928,-9.2863991758\n0.2306122448979592,0,0,36.4198645969587,-11.2623709618\n0.23877551020408164,0,0,21.942025515861225,-11.2755564387\n0.2469387755102041,0,0,36.758898149976076,-12.8287491264\n0.2551020408163266,1,0,21.921968157879263,-12.9729740121\n0.263265306122449,0,1,39.529189300267916,-13.7109643688\n0.27142857142857146,1,1,29.37302403295403,-13.5832634594\n0.2795918367346939,1,0,39.535221763806746,-15.6620129919\n0.28775510204081634,0,0,32.09691039490092,-15.1294884383\n0.29591836734693877,0,0,34.78527158796604,-14.8274359553\n0.3040816326530612,1,1,20.783755845086414,-15.8166307749\n0.3122448979591837,1,1,25.65613925152819,-13.7952339417\n0.3204081632653062,1,0,22.403931224263378,-15.0075354341\n0.3285714285714286,1,1,25.922803950442898,-16.5247671101\n0.33673469387755106,0,0,22.37455437908488,-15.2514506557\n0.3448979591836735,1,0,26.35966358787952,-16.6600609391\n0.35306122448979593,0,1,28.2852598902934,-16.056000484\n0.36122448979591837,1,0,21.282949926975686,-15.0229669014\n0.3693877551020408,0,1,33.8494423874004,-15.7826875702\n0.37755102040816324,1,1,31.332029084131502,-16.9831674474\n0.3857142857142858,1,1,25.30778981878891,-17.1815368913\n0.3938775510204082,0,1,30.464961069333995,-17.2241404304\n0.40204081632653066,1,1,21.878810215168834,-17.625059345\n0.4102040816326531,1,1,31.518929911123585,-17.6205813416\n0.41836734693877553,0,0,38.58592395152428,-16.7201872166\n0.42653061224489797,0,1,26.371379049026473,-18.6179101111\n0.4346938775510204,1,1,33.348207599273636,-16.4596524298\n0.44285714285714284,0,0,22.635957248087845,-16.7383288951\n0.4510204081632654,1,0,34.32654408237131,-18.5990472885\n0.4591836734693878,1,1,25.788121858944024,-18.2492714753\n0.46734693877551026,1,0,23.663827240142336,-17.8318654208\n0.4755102040816327,1,0,31.730258696201663,-15.3689257002\n0.48367346938775513,1,1,20.402150923749872,-18.7114890641\n0.49183673469387756,0,1,36.57880058434726,-17.8741045022\n0.5,1,0,20.09390952385094,-19.0352957868`;
+  const exampleAEq = `[PARAMS]\na = 5\nb = 2\nc = -7\n\n[EQUATION]\naa = inv(clamp(v1, 0.2, 0.3)) - inv(0.2)\nbb = inv(clamp(v1, 0.3, 0.4)) - inv(0.3)\neq = c + b*bb + a*aa`;
+  const exampleBData = `v1,v2,v3,v4,value\n1,1,1,10,6\n2,1,1,10,7\n3,1,1,10,8\n4,1,1,10,9\n1,2,1,10,8\n2,2,1,10,9\n3,2,1,10,10\n4,2,1,10,11`;
+  const exampleBEq = `[PARAMS]\na = 1\nb = 2\nc = 3\n\n[EQUATION]\neq = c + b*v2 + a*v1`;
+
+  // Color palette generator (golden ratio hue rotation)
+  function generateColors(n) {
+    const colors = [];
+    const golden = 0.61803398875;
+    let h = Math.random();
+    for (let i = 0; i < n; i++) {
+      h += golden;
+      h %= 1;
+      const s = 0.5;
+      const l = 0.65;
+      colors.push(hslToHex(h * 360, s * 100, l * 100));
+    }
+    return colors;
+  }
+  function hslToHex(h, s, l) {
+    s /= 100;
+    l /= 100;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r = 0, g = 0, b = 0;
+    if (0 <= h && h < 60) { r = c; g = x; b = 0; }
+    else if (60 <= h && h < 120) { r = x; g = c; b = 0; }
+    else if (120 <= h && h < 180) { r = 0; g = c; b = x; }
+    else if (180 <= h && h < 240) { r = 0; g = x; b = c; }
+    else if (240 <= h && h < 300) { r = x; g = 0; b = c; }
+    else if (300 <= h && h < 360) { r = c; g = 0; b = x; }
+    r = Math.round((r + m) * 255);
+    g = Math.round((g + m) * 255);
+    b = Math.round((b + m) * 255);
+    return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0');
+  }
+
+  // Mathematical helper functions
+  function clamp(x, lo, hi) {
+    return Math.max(lo, Math.min(hi, x));
+  }
+  function inv(z) {
+    return 1 / z;
+  }
+  function normsInv(p) {
+    // Inverse of the standard normal CDF (Acklam's approximation)
+    if (p <= 0 || p >= 1) return NaN;
+    const a1 = -3.969683028665376e+01;
+    const a2 = 2.209460984245205e+02;
+    const a3 = -2.759285104469687e+02;
+    const a4 = 1.383577518672690e+02;
+    const a5 = -3.066479806614716e+01;
+    const a6 = 2.506628277459239e+00;
+    const b1 = -5.447609879822406e+01;
+    const b2 = 1.615858368580409e+02;
+    const b3 = -1.556989798598866e+02;
+    const b4 = 6.680131188771972e+01;
+    const b5 = -1.328068155288572e+01;
+    const c1 = -7.784894002430293e-03;
+    const c2 = -3.223964580411365e-01;
+    const c3 = -2.400758277161838e+00;
+    const c4 = -2.549732539343734e+00;
+    const c5 = 4.374664141464968e+00;
+    const c6 = 2.938163982698783e+00;
+    const d1 = 7.784695709041462e-03;
+    const d2 = 3.224671290700398e-01;
+    const d3 = 2.445134137142996e+00;
+    const d4 = 3.754408661907416e+00;
+    const pLow = 0.02425;
+    const pHigh = 1 - pLow;
+    let q, r, x;
+    if (p < pLow) {
+      q = Math.sqrt(-2 * Math.log(p));
+      x = (((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) / ((((d1 * q + d2) * q + d3) * q + d4) * q + 1);
+    } else if (p > pHigh) {
+      q = Math.sqrt(-2 * Math.log(1 - p));
+      x = -(((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) / ((((d1 * q + d2) * q + d3) * q + d4) * q + 1);
+    } else {
+      q = p - 0.5;
+      r = q * q;
+      x = (((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) * q / (((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1);
+    }
+    // One iteration of Halley's method for better accuracy
+    const e = 0.5 * erfc(-x / Math.SQRT2) - p;
+    const u = e * Math.SQRT2 * Math.exp(x * x / 2);
+    x = x - u / (1 + x * u / 2);
+    return x;
+  }
+  function erfc(x) {
+    // Complementary error function
+    return 1 - erf(x);
+  }
+  function erf(x) {
+    // Approximation of the error function
+    const sign = Math.sign(x);
+    x = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * x);
+    const a1 = 0.254829592;
+    const a2 = -0.284496736;
+    const a3 = 1.421413741;
+    const a4 = -1.453152027;
+    const a5 = 1.061405429;
+    // Compute polynomial approximation; close all parentheses properly.
+    const poly = ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t;
+    const y = 1 - poly * Math.exp(-x * x);
+    return sign * y;
+  }
+
+  // Helper: sanitize column names to valid JS identifiers
+  function sanitizeName(name) {
+    return name.trim().replace(/[^a-zA-Z0-9_]/g, '_').replace(/^([0-9])/, '_$1');
+  }
+
+  // Global state
+  let csvRows = [];
+  let colNames = [];
+  let valueKey = '';
+  let params = {};
+  let assignments = [];
+  let eqAssign = null;
+  let filterSelections = {};
+  let xVar = null;
+
+  const xSelect = document.getElementById('xSelect');
+  const filterSection = document.getElementById('filterSection');
+  const paramSection = document.getElementById('paramSection');
+  const equationInput = document.getElementById('equationInput');
+  const settingsPanel = document.getElementById('settingsPanel');
+  const toggleSettingsBtn = document.getElementById('toggleSettings');
+  const messageDiv = document.getElementById('message');
+  const legendDiv = document.getElementById('legend');
+  const chartCanvas = document.getElementById('chartCanvas');
+  const ctx = chartCanvas.getContext('2d');
+
+  // Toggle settings panel
+  toggleSettingsBtn.addEventListener('click', () => {
+    settingsPanel.classList.toggle('open');
+  });
+
+  // Resize canvas to fit container
+  function resizeCanvas() {
+    const container = document.getElementById('chartContainer');
+    chartCanvas.width = container.clientWidth;
+    chartCanvas.height = container.clientHeight;
+    updatePlot();
+  }
+  window.addEventListener('resize', resizeCanvas);
+
+  // CSV parsing
+  function parseCSV(content) {
+    const lines = content.replace(/\r/g, '').trim().split(/\n+/);
+    if (!lines.length) return [];
+    // Handle BOM
+    let header = lines[0];
+    if (header.charCodeAt(0) === 0xfeff) {
+      header = header.slice(1);
+    }
+    const headers = header.split(',').map(h => h.trim());
+    const sanitized = headers.map(sanitizeName);
+    const data = [];
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      const parts = line.split(',');
+      if (parts.length < sanitized.length) continue;
+      const row = {};
+      for (let j = 0; j < sanitized.length; j++) {
+        const val = parts[j].trim();
+        const num = Number(val);
+        row[sanitized[j]] = isNaN(num) || val === '' ? val : num;
+      }
+      data.push(row);
+    }
+    colNames = sanitized.slice(0, 4);
+    valueKey = sanitized[4] || 'value';
+    return data;
+  }
+
+  // TXT parsing
+  function parseTXT(content) {
+    const lines = content.replace(/\r/g, '').split(/\n+/);
+    params = {};
+    assignments = [];
+    eqAssign = null;
+    let current = null;
+    for (let raw of lines) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const lower = line.toLowerCase();
+      if (lower.startsWith('[params]')) {
+        current = 'params';
+        continue;
+      }
+      if (lower.startsWith('[equation]')) {
+        current = 'eq';
+        continue;
+      }
+      if (current === 'params') {
+        const m = line.split('=');
+        if (m.length >= 2) {
+          const key = sanitizeName(m[0].trim());
+          const val = parseFloat(m[1].replace(/\s+/g, ''));
+          if (!isNaN(val)) params[key] = val;
+        }
+      } else if (current === 'eq') {
+        const m = line.split('=');
+        if (m.length >= 2) {
+          const key = sanitizeName(m[0].trim());
+          const expr = m.slice(1).join('=');
+          if (key === 'eq') {
+            eqAssign = { var: key, expr: expr.trim() };
+          } else {
+            assignments.push({ var: key, expr: expr.trim() });
+          }
+        }
+      }
+    }
+  }
+
+  // Build parameter sliders
+  function buildParamControls() {
+    paramSection.innerHTML = '';
+    Object.keys(params).forEach(key => {
+      const init = params[key];
+      const min = init - Math.max(Math.abs(init) * 5, 10);
+      const max = init + Math.max(Math.abs(init) * 5, 10);
+      const container = document.createElement('div');
+      container.className = 'section';
+      const label = document.createElement('label');
+      label.textContent = `${key}:`;
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = min;
+      range.max = max;
+      range.step = (max - min) / 100;
+      range.value = init;
+      const number = document.createElement('input');
+      number.type = 'number';
+      number.min = min;
+      number.max = max;
+      number.step = range.step;
+      number.value = init;
+      range.addEventListener('input', () => {
+        number.value = range.value;
+        params[key] = parseFloat(range.value);
+        updatePlot();
+      });
+      number.addEventListener('change', () => {
+        let val = parseFloat(number.value);
+        if (isNaN(val)) val = 0;
+        params[key] = val;
+        range.value = val;
+        updatePlot();
+      });
+      container.appendChild(label);
+      container.appendChild(range);
+      container.appendChild(number);
+      paramSection.appendChild(container);
+    });
+  }
+
+  // Build filter checkboxes based on selected x variable
+  function buildFilters() {
+    filterSection.innerHTML = '';
+    if (!csvRows.length || !xVar) return;
+    const vars = colNames.filter(v => v !== xVar);
+    // Only take first two variables for filtering
+    const fVars = vars.slice(0, 2);
+    fVars.forEach(v => {
+      const label = document.createElement('div');
+      label.textContent = `篩選 ${v}`;
+      label.style.marginBottom = '0.25rem';
+      filterSection.appendChild(label);
+      const group = document.createElement('div');
+      group.className = 'checkbox-group';
+      // find unique values
+      const unique = Array.from(new Set(csvRows.map(r => r[v])));
+      unique.sort((a, b) => {
+        const aa = String(a), bb = String(b);
+        if (!isNaN(a) && !isNaN(b)) return parseFloat(a) - parseFloat(b);
+        return aa.localeCompare(bb);
+      });
+      filterSelections[v] = new Set(unique);
+      unique.forEach(val => {
+        const cbLabel = document.createElement('label');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = true;
+        cb.addEventListener('change', () => {
+          if (cb.checked) filterSelections[v].add(val);
+          else filterSelections[v].delete(val);
+          updatePlot();
+        });
+        cbLabel.appendChild(cb);
+        cbLabel.appendChild(document.createTextNode(String(val)));
+        group.appendChild(cbLabel);
+      });
+      filterSection.appendChild(group);
+    });
+  }
+
+  // Build x axis select options
+  function populateXSelect() {
+    xSelect.innerHTML = '';
+    colNames.forEach(name => {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      xSelect.appendChild(option);
+    });
+    if (colNames.length) {
+      xSelect.value = colNames[0];
+      xVar = colNames[0];
+    }
+    xSelect.addEventListener('change', () => {
+      xVar = xSelect.value;
+      buildFilters();
+      updatePlot();
+    });
+  }
+
+  // Evaluate expression in context of env
+  function evalExpression(expr, env) {
+    // Replace ^ with ** for exponentiation
+    const jsExpr = expr.replace(/\^/g, '**');
+    const names = Object.keys(env);
+    const values = Object.values(env);
+    try {
+      const fn = new Function(...names, 'return ' + jsExpr);
+      return fn(...values);
+    } catch (err) {
+      return NaN;
+    }
+  }
+
+  // Compute eq value for a given row
+  function computeEq(row) {
+    // Create environment with params, row variables and functions
+    const env = Object.assign({}, params);
+    // Add row variables
+    for (const key of colNames) {
+      env[key] = row[key];
+    }
+    env[valueKey] = row[valueKey];
+    // Add built-in functions and constants
+    env.clamp = clamp;
+    env.inv = inv;
+    env.min = Math.min;
+    env.max = Math.max;
+    env.abs = Math.abs;
+    env.sqrt = Math.sqrt;
+    env.log = Math.log;
+    env.LN = Math.log;
+    env.ln = Math.log;
+    env.exp = Math.exp;
+    env.EXP = Math.exp;
+    env.pow = Math.pow;
+    env.NORMSINV = normsInv;
+    env.normsInv = normsInv;
+    // Evaluate assignments sequentially
+    const local = {};
+    for (const assign of assignments) {
+      const val = evalExpression(assign.expr, Object.assign({}, env, local));
+      local[assign.var] = val;
+    }
+    // Merge local variables
+    for (const k in local) {
+      env[k] = local[k];
+    }
+    if (eqAssign) {
+      const val = evalExpression(eqAssign.expr, env);
+      return val;
+    }
+    return NaN;
+  }
+
+  // Draw a shape at a point
+  function drawShape(ctx, shape, x, y, size, fill, stroke) {
+    ctx.save();
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    if (shape === 'circle') {
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (shape === 'square') {
+      ctx.rect(x - size, y - size, size * 2, size * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (shape === 'triangle') {
+      ctx.moveTo(x, y - size);
+      ctx.lineTo(x + size, y + size);
+      ctx.lineTo(x - size, y + size);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (shape === 'diamond') {
+      ctx.moveTo(x, y - size);
+      ctx.lineTo(x + size, y);
+      ctx.lineTo(x, y + size);
+      ctx.lineTo(x - size, y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Main drawing function
+  function drawChart(combos) {
+    ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+    // If no combos, show message and return
+    if (!combos || Object.keys(combos).length === 0) {
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '尚未載入資料或無符合篩選的資料列';
+      legendDiv.innerHTML = '';
+      return;
+    }
+    messageDiv.style.display = 'none';
+    // Compute global ranges
+    let xMin = Infinity, xMax = -Infinity;
+    let yMin = Infinity, yMax = -Infinity;
+    let vMin = Infinity, vMax = -Infinity;
+    for (const key in combos) {
+      const c = combos[key];
+      c.points.forEach(pt => {
+        const xv = pt.x;
+        const yv = pt.y;
+        const dv = pt.dataY;
+        if (!isNaN(xv)) {
+          if (xv < xMin) xMin = xv;
+          if (xv > xMax) xMax = xv;
+        }
+        if (!isNaN(yv)) {
+          if (yv < yMin) yMin = yv;
+          if (yv > yMax) yMax = yv;
+        }
+        if (!isNaN(dv)) {
+          if (dv < vMin) vMin = dv;
+          if (dv > vMax) vMax = dv;
+        }
+      });
+      c.line.forEach(pt => {
+        const yv = pt.y;
+        if (!isNaN(yv)) {
+          if (yv < yMin) yMin = yv;
+          if (yv > yMax) yMax = yv;
+        }
+      });
+    }
+    // Expand ranges slightly
+    if (xMin === xMax) {
+      xMin -= 0.5;
+      xMax += 0.5;
+    }
+    if (yMin === yMax) {
+      yMin -= 0.5;
+      yMax += 0.5;
+    }
+    // Add margin 10%
+    const xPadding = (xMax - xMin) * 0.1;
+    const yPadding = (yMax - yMin) * 0.1;
+    xMin -= xPadding;
+    xMax += xPadding;
+    yMin -= yPadding;
+    yMax += yPadding;
+    const margin = 50;
+    const w = chartCanvas.width;
+    const h = chartCanvas.height;
+    // Axis scale functions
+    const xScale = v => margin + (v - xMin) / (xMax - xMin) * (w - 2 * margin);
+    const yScale = v => h - margin - (v - yMin) / (yMax - yMin) * (h - 2 * margin);
+    // Draw grid lines and axes
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    // X axis
+    ctx.moveTo(margin, h - margin);
+    ctx.lineTo(w - margin, h - margin);
+    // Y axis
+    ctx.moveTo(margin, margin);
+    ctx.lineTo(margin, h - margin);
+    ctx.stroke();
+    // Tick marks
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = '12px sans-serif';
+    const xTicks = 5;
+    for (let i = 0; i <= xTicks; i++) {
+      const xv = xMin + i * (xMax - xMin) / xTicks;
+      const xp = xScale(xv);
+      ctx.beginPath();
+      ctx.moveTo(xp, h - margin);
+      ctx.lineTo(xp, h - margin + 4);
+      ctx.stroke();
+      const text = parseFloat(xv.toFixed(3));
+      const metrics = ctx.measureText(text);
+      ctx.fillText(text, xp - metrics.width / 2, h - margin + 16);
+    }
+    const yTicks = 5;
+    for (let i = 0; i <= yTicks; i++) {
+      const yv = yMin + i * (yMax - yMin) / yTicks;
+      const yp = yScale(yv);
+      ctx.beginPath();
+      ctx.moveTo(margin - 4, yp);
+      ctx.lineTo(margin, yp);
+      ctx.stroke();
+      const text = parseFloat(yv.toFixed(3));
+      const metrics = ctx.measureText(text);
+      ctx.fillText(text, margin - metrics.width - 6, yp + 4);
+    }
+    // Draw combos lines and points
+    for (const key in combos) {
+      const c = combos[key];
+      // Draw line
+      ctx.strokeStyle = c.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      let started = false;
+      c.line.forEach(pt => {
+        const xp = xScale(pt.x);
+        const yp = yScale(pt.y);
+        if (!started) {
+          ctx.moveTo(xp, yp);
+          started = true;
+        } else {
+          ctx.lineTo(xp, yp);
+        }
+      });
+      ctx.stroke();
+      // Draw data points
+      c.points.forEach(pt => {
+        const xp = xScale(pt.x);
+        const ypData = yScale(pt.dataY);
+        // Fill color by diff category; stroke is combination color
+        let fill;
+        if (pt.diffCat === 'ok') fill = '#10b981';
+        else if (pt.diffCat === 'warn') fill = '#f59e0b';
+        else if (pt.diffCat === 'bad') fill = '#ef4444';
+        else fill = '#94a3b8';
+        drawShape(ctx, pt.shape, xp, ypData, 5, fill, c.color);
+      });
+    }
+    // Build legend
+    legendDiv.innerHTML = '';
+    // Difference legend
+    const diffRow = document.createElement('div');
+    diffRow.className = 'row';
+    diffRow.innerHTML = '<strong>差異說明：</strong>';
+    legendDiv.appendChild(diffRow);
+    const diffCats = [
+      {label:'≤5%', color:'#10b981'},
+      {label:'5–10%', color:'#f59e0b'},
+      {label:'≥10%', color:'#ef4444'},
+      {label:'NA', color:'#94a3b8'}
+    ];
+    diffCats.forEach(dc => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const swatch = document.createElement('span');
+      swatch.style.display = 'inline-block';
+      swatch.style.width = '12px';
+      swatch.style.height = '12px';
+      swatch.style.background = dc.color;
+      swatch.style.borderRadius = '2px';
+      row.appendChild(swatch);
+      const text = document.createElement('span');
+      text.textContent = dc.label;
+      row.appendChild(text);
+      legendDiv.appendChild(row);
+    });
+    // Combo legend
+    const comboTitle = document.createElement('div');
+    comboTitle.className = 'row';
+    comboTitle.innerHTML = '<strong>條件線：</strong>';
+    legendDiv.appendChild(comboTitle);
+    Object.keys(combos).forEach(key => {
+      const c = combos[key];
+      const row = document.createElement('div');
+      row.className = 'row';
+      // Create small canvas for shape icon
+      const icon = document.createElement('canvas');
+      icon.width = 14;
+      icon.height = 14;
+      const ictx = icon.getContext('2d');
+      drawShape(ictx, c.shape, 7, 7, 5, '#94a3b8', c.color);
+      row.appendChild(icon);
+      const label = document.createElement('span');
+      label.textContent = c.label;
+      row.appendChild(label);
+      legendDiv.appendChild(row);
+    });
+  }
+
+  // Update plot based on current state
+  function updatePlot() {
+    // Clear message
+    legendDiv.innerHTML = '';
+    if (!csvRows.length) {
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '尚未載入資料';
+      ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+      return;
+    }
+    if (!eqAssign) {
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '方程式未定義';
+      ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+      return;
+    }
+    // Build combos
+    const combos = {};
+    const vars = colNames.filter(v => v !== xVar);
+    const fVars = vars.slice(0, 2);
+    const selectedMap = {};
+    fVars.forEach(v => {
+      selectedMap[v] = filterSelections[v] ? new Set(filterSelections[v]) : new Set();
+    });
+    csvRows.forEach(row => {
+      // filter by selected values
+      let include = true;
+      for (const v of fVars) {
+        if (selectedMap[v].size && !selectedMap[v].has(row[v])) {
+          include = false;
+          break;
+        }
+      }
+      if (!include) return;
+      const key = fVars.map(v => row[v]).join('|');
+      if (!combos[key]) {
+        combos[key] = { rows: [], points: [], line: [], color: '', shape: '', label: '' };
+      }
+      combos[key].rows.push(row);
+    });
+    // If no combos
+    if (Object.keys(combos).length === 0) {
+      ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '無符合條件的資料';
+      return;
+    }
+    // Assign colors and shapes
+    const keys = Object.keys(combos);
+    const colors = generateColors(keys.length);
+    keys.forEach((key, idx) => {
+      const combo = combos[key];
+      combo.color = colors[idx];
+      const shapeList = ['circle','square','triangle','diamond'];
+      combo.shape = shapeList[idx % shapeList.length];
+      const values = key.split('|');
+      const fVars2 = colNames.filter(v => v !== xVar).slice(0, 2);
+      const parts = [];
+      for (let i = 0; i < fVars2.length; i++) {
+        parts.push(`${fVars2[i]}=${values[i]}`);
+      }
+      combo.label = parts.join(' & ');
+      // Compute points
+      combo.rows.forEach(row => {
+        const eqVal = computeEq(row);
+        const val = row[valueKey];
+        let diffCat = 'na';
+        if (typeof eqVal === 'number' && !isNaN(eqVal) && typeof val === 'number' && val !== 0) {
+          const diff = Math.abs(eqVal / val - 1);
+          if (diff <= 0.05) diffCat = 'ok';
+          else if (diff <= 0.1) diffCat = 'warn';
+          else diffCat = 'bad';
+        }
+        combo.points.push({ x: row[xVar], y: eqVal, dataY: val, diffCat: diffCat, shape: combo.shape });
+      });
+      combo.points.sort((a,b) => a.x - b.x);
+    });
+    // Determine global xMin/xMax for sampling
+    let xMin = Infinity, xMax = -Infinity;
+    for (const key in combos) {
+      combos[key].points.forEach(pt => {
+        if (pt.x < xMin) xMin = pt.x;
+        if (pt.x > xMax) xMax = pt.x;
+      });
+    }
+    if (xMin === xMax) {
+      xMin -= 0.5;
+      xMax += 0.5;
+    }
+    // Build line samples
+    const samples = 100;
+    keys.forEach(key => {
+      const combo = combos[key];
+      const base = combo.rows[0];
+      const step = (xMax - xMin) / (samples - 1);
+      combo.line = [];
+      for (let i = 0; i < samples; i++) {
+        const xv = xMin + step * i;
+        const envRow = Object.assign({}, base);
+        envRow[xVar] = xv;
+        const yv = computeEq(envRow);
+        combo.line.push({ x: xv, y: yv });
+      }
+    });
+    drawChart(combos);
+  }
+
+  // Handle file inputs
+  document.getElementById('csvFile').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      csvRows = parseCSV(ev.target.result);
+      if (!csvRows.length) {
+        messageDiv.style.display = 'block';
+        messageDiv.textContent = 'CSV 檔案無有效資料列';
+        return;
+      }
+      populateXSelect();
+      buildFilters();
+      updatePlot();
+    };
+    reader.readAsText(file);
+  });
+  document.getElementById('txtFile').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      parseTXT(ev.target.result);
+      equationInput.value = assignments.map(a => `${a.var} = ${a.expr}`).join('\n') + (eqAssign ? `\neq = ${eqAssign.expr}` : '');
+      buildParamControls();
+      updatePlot();
+    };
+    reader.readAsText(file);
+  });
+  // Apply equation from textarea
+  document.getElementById('applyEquation').addEventListener('click', () => {
+    const lines = equationInput.value.split(/\n+/);
+    assignments = [];
+    eqAssign = null;
+    lines.forEach(raw => {
+      const line = raw.trim();
+      if (!line) return;
+      const idx = line.indexOf('=');
+      if (idx < 0) return;
+      const key = sanitizeName(line.slice(0, idx).trim());
+      const expr = line.slice(idx + 1).trim();
+      if (key === 'eq') eqAssign = { var: key, expr: expr };
+      else assignments.push({ var: key, expr: expr });
+    });
+    updatePlot();
+  });
+  // Example buttons
+  document.getElementById('exampleA').addEventListener('click', () => {
+    csvRows = parseCSV(exampleAData);
+    parseTXT(exampleAEq);
+    equationInput.value = assignments.map(a => `${a.var} = ${a.expr}`).join('\n') + `\neq = ${eqAssign.expr}`;
+    populateXSelect();
+    buildFilters();
+    buildParamControls();
+    updatePlot();
+  });
+  document.getElementById('exampleB').addEventListener('click', () => {
+    csvRows = parseCSV(exampleBData);
+    parseTXT(exampleBEq);
+    equationInput.value = assignments.map(a => `${a.var} = ${a.expr}`).join('\n') + `\neq = ${eqAssign.expr}`;
+    populateXSelect();
+    buildFilters();
+    buildParamControls();
+    updatePlot();
+  });
+
+  // Initial resize
+  resizeCanvas();
+  </script>
+</body>
+</html>
