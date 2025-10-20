@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CSV × 方程對齊繪圖（Worker+TypedArray+自測）</title>
+<style>
+  :root { --controls-h: 3.25rem; }
+  html,body { height:100%; }
+  body {
+    margin:0; background:#0b1020; color:#e5e7eb;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;
+    overflow:hidden;
+  }
+  /* 置頂控制列 */
+  #controls{
+    position:fixed; top:0; left:0; right:0; z-index:20;
+    display:flex; flex-wrap:wrap; align-items:center; gap:0.5rem;
+    padding:0.5rem; background:#111827; border-bottom:1px solid #374151;
+  }
+  #controls h1{ margin:0; font-size:1.05rem; color:#60a5fa; white-space:nowrap; }
+  #controls label{ display:flex; align-items:center; gap:0.25rem; font-size:0.85rem; white-space:nowrap; }
+  #controls input[type="file"]{ color:#e5e7eb; background:#1f2937; border:1px solid #374151; padding:0.25rem; }
+  #controls select,#controls button,#controls input[type="checkbox"]{
+    background:#1f2937; color:#e5e7eb; border:1px solid #374151; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.85rem; cursor:pointer; min-width:70px;
+  }
+  #controls button:hover{ background:#374151; }
+  /* 參數列（控制列下方一行可橫向捲動） */
+  #paramBar{ display:flex; align-items:center; gap:0.5rem; overflow-x:auto; max-width:100%; padding:0.25rem 0; }
+  .param{ display:inline-flex; align-items:center; gap:0.25rem; background:#0f172a; border:1px solid #334155; border-radius:6px; padding:0.25rem 0.5rem; white-space:nowrap; }
+  .param label{ font-size:0.75rem; color:#9ca3af; }
+  .param input[type="range"]{ width:140px; }
+  .param input[type="number"]{ width:80px; background:#111827; border:1px solid #374151; color:#e5e7eb; font-size:0.8rem; }
+  /* 右側設定面板 */
+  #settingsPanel{
+    position:fixed; top:var(--controls-h); right:0; width:340px;
+    max-height:calc(100vh - var(--controls-h)); overflow-y:auto;
+    background:#1f2937; border-left:1px solid #374151; padding:0.75rem;
+    transform:translateX(100%); transition:transform .25s ease-in-out; z-index:15;
+  }
+  #settingsPanel.open{ transform:translateX(0); }
+  #settingsPanel h2{ margin:0 0 0.5rem 0; font-size:1rem; color:#60a5fa; }
+  .section{ margin-bottom:1rem; }
+  .section label{ display:block; margin-bottom:0.25rem; font-size:0.8rem; color:#9ca3af; }
+  .section textarea{ width:100%; min-height:120px; background:#111827; color:#e5e7eb; border:1px solid #374151; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size:0.8rem; }
+  .bulk{ margin:0.25rem 0 0.5rem; display:flex; gap:0.25rem; flex-wrap:wrap; }
+  .bulk button{ padding:0.15rem 0.5rem; font-size:0.75rem; }
+  /* 中央畫布 */
+  #chartContainer{ position:absolute; top:var(--controls-h); bottom:0; left:0; right:0; overflow:hidden; }
+  #chartCanvas{ width:100%; height:100%; display:block; }
+  #message{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#9ca3af; font-size:1rem; text-align:center; white-space:pre-wrap; pointer-events:none; }
+  #legend{
+    position:fixed; bottom:0.5rem; left:0.5rem; background:rgba(15,23,42,0.9);
+    padding:0.5rem; border-radius:6px; font-size:0.75rem; max-width:44%; max-height:38vh; overflow-y:auto; border:1px solid #334155; z-index:16;
+  }
+  /* 測試視窗：右下角、折疊 */
+  #testPanel{
+    position:fixed; bottom:0.5rem; right:0.5rem; z-index:25;
+    background:rgba(17,24,39,0.92); border:1px solid #334155; border-radius:6px; padding:0.25rem 0.5rem;
+    font-size:0.8rem; max-width:40vw; color:#e5e7eb;
+  }
+  #testPanel summary{ cursor:pointer; outline:none; list-style:none; }
+  #testPanel summary::-webkit-details-marker{ display:none; }
+  #testPanel summary{ display:flex; align-items:center; gap:0.5rem; }
+  #testPanel .badge{ display:inline-block; padding:0 0.4rem; border-radius:999px; background:#0f172a; border:1px solid #334155; font-size:0.72rem; color:#9ca3af; }
+  #testBody{ padding:0.25rem 0.25rem 0.5rem; }
+  #testPanel .ok{ color:#10b981; } #testPanel .fail{ color:#ef4444; }
+</style>
+</head>
+<body>
+  <div id="controls">
+    <h1>CSV×方程對齊繪圖（高效/穩健/自測）</h1>
+    <label>CSV<input type="file" id="csvFile" accept=".csv"/></label>
+    <label>TXT<input type="file" id="txtFile" accept=".txt"/></label>
+    <button id="exampleA" title="載入範例 A">示例 A</button>
+    <button id="exampleB" title="載入範例 B">示例 B</button>
+    <label>X 軸<select id="xSelect"></select></label>
+    <button id="resetParams">重設參數</button>
+    <button id="toggleSettings">設定</button>
+    <div id="paramBar"></div>
+  </div>
+
+  <div id="settingsPanel">
+    <h2>設定</h2>
+    <div id="filterSection" class="section"></div>
+    <div id="equationSection" class="section">
+      <label for="equationInput">方程式編輯（必須包含 eq=...）</label>
+      <textarea id="equationInput"></textarea>
+      <button id="applyEquation">套用方程</button>
+    </div>
+  </div>
+
+  <div id="chartContainer">
+    <canvas id="chartCanvas"></canvas>
+    <div id="message"></div>
+    <div id="legend"></div>
+  </div>
+
+  <!-- 折疊式測試面板 -->
+  <div id="testPanel" style="display:none;">
+    <details id="testDetails">
+      <summary><span>自動化測試</span><span class="badge" id="testSummaryBadge">執行中…</span></summary>
+      <div id="testBody"></div>
+    </details>
+  </div>
+
+<script>
+/* ==============================
+   內建範例資料與方程
+   ============================== */
+const exampleAData =
+`v1,v2,v3,v4,value
+0.1,0,0,31.403935408357594,-7.2987317818
+0.10816326530612246,1,1,28.772030269246407,-6.613613395
+0.1163265306122449,1,1,39.767476761184525,-7.3951259572
+0.12448979591836735,0,1,22.04089621496056,-7.7764767558
+0.1326530612244898,1,1,24.177535121896696,-6.5779052811
+0.14081632653061227,1,0,23.226190357699924,-7.1279443218
+0.1489795918367347,1,1,33.06216650930797,-7.1546304445
+0.15714285714285714,1,0,25.065832050795642,-7.1213832017
+0.1653061224489796,1,0,29.326215457126125,-6.5347771428
+0.17346938775510207,1,1,24.888511840032056,-7.7606183393
+0.1816326530612245,1,1,23.179391672910395,-6.9111706361
+0.18979591836734694,0,0,22.207502823286102,-7.5819665698
+0.1979591836734694,0,1,33.126591789305465,-7.3351251825
+0.20612244897959187,1,0,22.763659026972277,-7.3661679895
+0.2142857142857143,0,1,23.93164723360107,-9.3193661316
+0.22244897959183674,0,0,27.37450341321928,-9.2863991758
+0.2306122448979592,0,0,36.4198645969587,-11.2623709618
+0.23877551020408164,0,0,21.942025515861225,-11.2755564387
+0.2469387755102041,0,0,36.758898149976076,-12.8287491264
+0.2551020408163266,1,0,21.921968157879263,-12.9729740121
+0.263265306122449,0,1,39.529189300267916,-13.7109643688
+0.27142857142857146,1,1,29.37302403295403,-13.5832634594
+0.2795918367346939,1,0,39.535221763806746,-15.6620129919
+0.28775510204081634,0,0,32.09691039490092,-15.1294884383
+0.29591836734693877,0,0,34.78527158796604,-14.8274359553
+0.3040816326530612,1,1,20.783755845086414,-15.8166307749
+0.3122448979591837,1,1,25.65613925152819,-13.7952339417
+0.3204081632653062,1,0,22.403931224263378,-15.0075354341
+0.3285714285714286,1,1,25.922803950442898,-16.5247671101
+0.33673469387755106,0,0,22.37455437908488,-15.2514506557
+0.3448979591836735,1,0,26.35966358787952,-16.6600609391
+0.35306122448979593,0,1,28.2852598902934,-16.056000484
+0.36122448979591837,1,0,21.282949926975686,-15.0229669014
+0.3693877551020408,0,1,33.8494423874004,-15.7826875702
+0.37755102040816324,1,1,31.332029084131502,-16.9831674474
+0.3857142857142858,1,1,25.30778981878891,-17.1815368913
+0.3938775510204082,0,1,30.464961069333995,-17.2241404304
+0.40204081632653066,1,1,21.878810215168834,-17.625059345
+0.4102040816326531,1,1,31.518929911123585,-17.6205813416
+0.41836734693877553,0,0,38.58592395152428,-16.7201872166
+0.42653061224489797,0,1,26.371379049026473,-18.6179101111
+0.4346938775510204,1,1,33.348207599273636,-16.4596524298
+0.44285714285714284,0,0,22.635957248087845,-16.7383288951
+0.4510204081632654,1,0,34.32654408237131,-18.5990472885
+0.4591836734693878,1,1,25.788121858944024,-18.2492714753
+0.46734693877551026,1,0,23.663827240142336,-17.8318654208
+0.4755102040816327,1,0,31.730258696201663,-15.3689257002
+0.48367346938775513,1,1,20.402150923749872,-18.7114890641
+0.49183673469387756,0,1,36.57880058434726,-17.8741045022
+0.5,1,0,20.09390952385094,-19.0352957868`;
+
+const exampleAEq =
+`[PARAMS]
+a = 5
+b = 2
+c = -7
+
+[EQUATION]
+aa = inv(clamp(v1, 0.1, 0.2)) - inv(0.1)
+bb = inv(clamp(v1, 0.3, 0.4)) - inv(0.3)
+eq = c + b*bb + a*aa`;
+
+const exampleBData =
+`v1,v2,v3,v4,value
+1,1,1,10,6
+2,1,1,10,7`;
+
+const exampleBEq =
+`[PARAMS]
+a = 1
+b = 2
+c = 3
+
+[EQUATION]
+eq = c + b*v2 + a*v1`;
+
+/* ==============================
+   色彩/形狀工具（穩定可重現）
+   ============================== */
+function hashString(str){ var h=0x811c9dc5>>>0; for(var i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=(h+((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24)))>>>0; } return h>>>0; }
+function hslToHex(h,s,l){ s/=100; l/=100; var c=(1-Math.abs(2*l-1))*s; var x=c*(1-Math.abs((h/60)%2-1)); var m=l-c/2; var r=0,g=0,b=0;
+  if(0<=h&&h<60){r=c;g=x;b=0;} else if(60<=h&&h<120){r=x;g=c;b=0;}
+  else if(120<=h&&h<180){r=0;g=c;b=x;} else if(180<=h&&h<240){r=0;g=x;b=c;}
+  else if(240<=h&&h<300){r=x;g=0;b=c;} else {r=c;g=0;b=x;}
+  r=Math.round((r+m)*255); g=Math.round((g+m)*255); b=Math.round((b+m)*255);
+  return '#'+r.toString(16).padStart(2,'0')+g.toString(16).padStart(2,'0')+b.toString(16).padStart(2,'0');
+}
+function colorForKey(key){ var h=hashString(key)%360; return hslToHex(h,58,62); }
+function shapeForKey(key){ var shapes=['circle','square','triangle','diamond']; return shapes[hashString(key)%shapes.length]; }
+
+/* ==============================
+   數學工具（主執行緒僅供其它處理用）
+   ============================== */
+function clamp(x, lo, hi){ return Math.max(lo, Math.min(hi, x)); }
+function inv(z){ return 1 / z; }
+function erfc(x){ return 1 - erf(x); }
+function erf(x){
+  var sign = x<0?-1:1; x=Math.abs(x);
+  var t=1/(1+0.3275911*x);
+  var a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429;
+  var poly=((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t;
+  var y=1 - poly*Math.exp(-x*x);
+  return sign*y;
+}
+function normsInv(p){
+  if(p<=0||p>=1) return NaN;
+  var a1=-3.969683028665376e+01,a2=2.209460984245205e+02,a3=-2.759285104469687e+02,a4=1.383577518672690e+02,a5=-3.066479806614716e+01,a6=2.506628277459239e+00;
+  var b1=-5.447609879822406e+01,b2=1.615858368580409e+02,b3=-1.556989798598866e+02,b4=6.680131188771972e+01,b5=-1.328068155288572e+01;
+  var c1=-7.784894002430293e-03,c2=-3.223964580411365e-01,c3=-2.400758277161838e+00,c4=-2.549732539343734e+00,c5=4.374664141464968e+00,c6=2.938163982698783e+00;
+  var d1=7.784695709041462e-03,d2=3.224671290700398e-01,d3=2.445134137142996e+00,d4=3.754408661907416e+00;
+  var pLow=0.02425,pHigh=1-pLow,q,r,x;
+  if(p<pLow){ q=Math.sqrt(-2*Math.log(p)); x=(((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q+c6)/((((d1*q+d2)*q+d3)*q+d4)*q+1); }
+  else if(p>pHigh){ q=Math.sqrt(-2*Math.log(1-p)); x=-(((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q+c6)/((((d1*q+d2)*q+d3)*q+d4)*q+1); }
+  else { q=p-0.5; r=q*q; x=(((((a1*r+a2)*r+a3)*r+a4)*r+a5)*r+a6)*q/((((b1*r+b2)*r+b3)*r+b4)*r+b5)*r+1; }
+  var e=0.5*erfc(-x/Math.SQRT2)-p; var u=e*Math.SQRT2*Math.exp(x*x/2); x=x - u/(1 + x*u/2); return x;
+}
+
+/* ==============================
+   DOM 與全域狀態
+   ============================== */
+function sanitizeName(name){ return name.trim().replace(/[^a-zA-Z0-9_]/g,'_').replace(/^([0-9])/, '_$1'); }
+
+var csvRows=[];      // 原始資料（輕量物件，僅繪圖用）
+var colNames=[];     // 前四欄變數名
+var valueKey='value';
+var params={};       // 參數可調
+var initParams={};   // 初始參數（重設用）
+var assignments=[];  // 前置變數 {var,expr}
+var eqAssign=null;   // {var:'eq',expr}
+var filterSelections={}; // 兩個非 X 變數的值集合
+var xVar=null;
+var combosCache=null;// 分組資料緩存（不含函數線）
+var eqYCache=null;   // 最新 worker 回傳的所有列 eq 值 (Float64Array)
+
+var controls=document.getElementById('controls');
+var paramBar=document.getElementById('paramBar');
+var xSelect=document.getElementById('xSelect');
+var filterSection=document.getElementById('filterSection');
+var equationInput=document.getElementById('equationInput');
+var settingsPanel=document.getElementById('settingsPanel');
+var toggleSettingsBtn=document.getElementById('toggleSettings');
+var resetParamsBtn=document.getElementById('resetParams');
+var messageDiv=document.getElementById('message');
+var legendDiv=document.getElementById('legend');
+var testPanel=document.getElementById('testPanel');
+var testDetails=document.getElementById('testDetails');
+var testBody=document.getElementById('testBody');
+var testBadge=document.getElementById('testSummaryBadge');
+var chartCanvas=document.getElementById('chartCanvas');
+var ctx=chartCanvas.getContext('2d');
+
+/* 控制列高度 → 內容頂邊 */
+function updateControlsHeightVar(){
+  var h=controls.getBoundingClientRect().height;
+  document.documentElement.style.setProperty('--controls-h', String(Math.round(h))+'px');
+}
+new ResizeObserver(updateControlsHeightVar).observe(controls);
+
+toggleSettingsBtn.addEventListener('click', function(){ settingsPanel.classList.toggle('open'); });
+
+/* DPR 畫布縮放（避免模糊） */
+function resizeCanvas(){
+  var container=document.getElementById('chartContainer');
+  var w=container.clientWidth, h=container.clientHeight, dpr=window.devicePixelRatio||1;
+  chartCanvas.style.width=w+'px'; chartCanvas.style.height=h+'px';
+  chartCanvas.width=Math.max(1, Math.floor(w*dpr));
+  chartCanvas.height=Math.max(1, Math.floor(h*dpr));
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  scheduleUpdate('resize');
+}
+window.addEventListener('resize', resizeCanvas);
+
+/* ==============================
+   解析 CSV / TXT
+   ============================== */
+function parseCSV(content){
+  var lines=content.replace(/\r/g,'').trim().split(/\n+/);
+  if(!lines.length) return [];
+  var header=lines[0]; if(header.charCodeAt(0)===0xfeff) header=header.slice(1);
+  var headers=header.split(',').map(function(h){return h.trim();});
+  var sanitized=headers.map(sanitizeName);
+  var data=[];
+  for(var i=1;i<lines.length;i++){
+    var line=lines[i].trim(); if(!line) continue;
+    var parts=line.split(','); if(parts.length<sanitized.length) continue;
+    var row={}; for(var j=0;j<sanitized.length;j++){
+      var val=parts[j].trim(); var num=Number(val);
+      row[sanitized[j]]=(val===''||isNaN(num))? val : num;
+    }
+    data.push(row);
+  }
+  colNames=sanitized.slice(0,4); valueKey=sanitized[4]||'value';
+  for(var k=0;k<data.length;k++){ data[k].__idx=k; } // 保留行索引
+  return data;
+}
+
+function parseTXT(content){
+  var lines=content.replace(/\r/g,'').split(/\n+/);
+  params={}; assignments=[]; eqAssign=null; initParams={}; var current=null;
+  for(var i=0;i<lines.length;i++){
+    var raw=lines[i]; var line=raw.trim(); if(!line||line.charAt(0)==='#') continue;
+    var lower=line.toLowerCase();
+    if(lower.indexOf('[params]')===0){ current='params'; continue; }
+    if(lower.indexOf('[equation]')===0){ current='eq'; continue; }
+    if(current==='params'){
+      var m=line.split('='); if(m.length>=2){
+        var key=sanitizeName(m[0].trim()); var val=parseFloat(m[1].replace(/\s+/g,''));
+        if(!Number.isNaN(val)){ params[key]=val; initParams[key]=val; }
+      }
+    }else if(current==='eq'){
+      var n=line.indexOf('='); if(n>=0){
+        var k=sanitizeName(line.slice(0,n).trim()); var expr=line.slice(n+1).trim();
+        if(k==='eq') eqAssign={ "var":k, "expr":expr }; else assignments.push({ "var":k, "expr":expr });
+      }
+    }
+  }
+}
+
+/* ==============================
+   UI 建構
+   ============================== */
+function buildParamControls(){
+  paramBar.innerHTML='';
+  var keys=Object.keys(params);
+  function schedule(){ scheduleUpdate('param'); }
+  for(var i=0;i<keys.length;i++){
+    var key=keys[i], init=params[key];
+    var range=Math.max(Math.abs(init)*5, 10), min=init-range, max=init+range;
+    var wrap=document.createElement('div'); wrap.className='param';
+    var label=document.createElement('label'); label.textContent=key;
+    var slider=document.createElement('input'); slider.type='range'; slider.min=min; slider.max=max; slider.step=(max-min)/100; slider.value=init;
+    var number=document.createElement('input'); number.type='number'; number.min=min; number.max=max; number.step=slider.step; number.value=init;
+    (function(key,slider,number){
+      function commit(val){ var num=parseFloat(val); if(!Number.isFinite(num)) return; params[key]=num; slider.value=num; number.value=num; schedule(); }
+      slider.addEventListener('input', function(){ commit(slider.value); });
+      number.addEventListener('change', function(){ commit(number.value); });
+    })(key,slider,number);
+    wrap.appendChild(label); wrap.appendChild(slider); wrap.appendChild(number);
+    paramBar.appendChild(wrap);
+  }
+}
+
+function buildFilters(){
+  filterSection.innerHTML=''; if(!csvRows.length||!xVar) return;
+  var vars=colNames.filter(function(v){return v!==xVar;}); var fVars=vars.slice(0,2);
+  for(var fi=0; fi<fVars.length; fi++){
+    (function(v){
+      var title=document.createElement('div'); title.textContent='篩選 '+v; title.style.margin='0 0 0.25rem 0'; filterSection.appendChild(title);
+      var bulk=document.createElement('div'); bulk.className='bulk';
+      var bAll=document.createElement('button'); bAll.textContent='全選';
+      var bNone=document.createElement('button'); bNone.textContent='全不選';
+      bulk.appendChild(bAll); bulk.appendChild(bNone); filterSection.appendChild(bulk);
+      var group=document.createElement('div'); group.style.display='flex'; group.style.flexWrap='wrap'; group.style.gap='0.25rem';
+      var uniqueVals=[]; var seen={};
+      for(var i=0;i<csvRows.length;i++){ var val=csvRows[i][v]; if(!seen[String(val)]){ seen[String(val)]=1; uniqueVals.push(val); } }
+      uniqueVals.sort(function(a,b){
+        var na=!isNaN(a), nb=!isNaN(b);
+        return (na&&nb)? (parseFloat(a)-parseFloat(b)) : String(a).localeCompare(String(b));
+      });
+      var set=new Set(uniqueVals); filterSelections[v]=set;
+      function renderChecks(){
+        group.innerHTML='';
+        for(var j=0;j<uniqueVals.length;j++){
+          (function(val){
+            var lb=document.createElement('label'); lb.style.display='inline-flex'; lb.style.alignItems='center'; lb.style.gap='0.25rem'; lb.style.fontSize='0.8rem';
+            var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=set.has(val);
+            cb.addEventListener('change', function(){
+              if(cb.checked) set.add(val); else set.delete(val);
+              scheduleUpdate('filter');
+            });
+            lb.appendChild(cb); lb.appendChild(document.createTextNode(String(val))); group.appendChild(lb);
+          })(uniqueVals[j]);
+        }
+      }
+      bAll.addEventListener('click', function(){ for(var k=0;k<uniqueVals.length;k++) set.add(uniqueVals[k]); renderChecks(); scheduleUpdate('filter'); });
+      bNone.addEventListener('click', function(){ set.clear(); renderChecks(); scheduleUpdate('filter'); });
+      renderChecks(); filterSection.appendChild(group);
+    })(fVars[fi]);
+  }
+}
+
+function populateXSelect(){
+  xSelect.innerHTML='';
+  for(var i=0;i<colNames.length;i++){ var name=colNames[i]; var op=document.createElement('option'); op.value=name; op.textContent=name; xSelect.appendChild(op); }
+  if(colNames.length){ xSelect.value=colNames[0]; xVar=colNames[0]; }
+  xSelect.onchange=function(){ xVar=xSelect.value; combosCache=null; scheduleUpdate('xchange'); };
+}
+
+/* ==============================
+   分組/取樣、插值曲線 & 視覺化
+   ============================== */
+function buildCombosStructure(){
+  var combos={};
+  var vars=colNames.filter(function(v){return v!==xVar;}); var fVars=vars.slice(0,2);
+  var selectedMap={}; for(var i=0;i<fVars.length;i++){ var v=fVars[i]; selectedMap[v]=filterSelections[v]? new Set(filterSelections[v]) : null; }
+  for(var ri=0; ri<csvRows.length; ri++){
+    var row=csvRows[ri];
+    var pass=true;
+    for(var j=0;j<fVars.length;j++){
+      var fv=fVars[j]; var sel=selectedMap[fv];
+      if(sel){ if(sel.size===0){ pass=false; break; } if(!sel.has(row[fv])){ pass=false; break; } }
+    }
+    if(!pass) continue;
+    var key=fVars.map(function(v){return row[v];}).join('|');
+    if(!combos[key]) combos[key]={ rows:[], points:[], lineX:[], lineY:[], color:colorForKey(key), shape:shapeForKey(key), label:'' };
+    combos[key].rows.push(row);
+  }
+  for(var k in combos){
+    var combo=combos[k];
+    var values=k.split('|'); var fVars2=colNames.filter(function(v){return v!==xVar;}).slice(0,2);
+    combo.label=fVars2.map(function(v,i){return v+'='+values[i];}).join(' & ');
+    combo.points=combo.rows.map(function(r){ return { x:r[xVar], dataY:r[valueKey], eqY:NaN, diffCat:'na', shape:combo.shape, idx:r.__idx }; });
+    combo.points.sort(function(a,b){ return a.x-b.x; });
+
+    // 自適應取樣數（與畫布寬度連動，60~600）
+    var samples=Math.min(600, Math.max(60, Math.floor(chartCanvas.clientWidth/2)));
+    // 以該組持有資料點的 x 範圍取樣；若整體無效則稍作護欄
+    var dmin=Infinity,dmax=-Infinity;
+    for(var i=0;i<combo.points.length;i++){ var xv=combo.points[i].x; if(Number.isFinite(xv)){ dmin=Math.min(dmin,xv); dmax=Math.max(dmax,xv);} }
+    if(!(dmin<dmax)){ dmin=(Number.isFinite(combo.points[0]?.x)? combo.points[0].x-0.5 : 0); dmax=(Number.isFinite(combo.points[0]?.x)? combo.points[0].x+0.5 : 1); }
+    var step=(dmax-dmin)/(samples-1);
+    combo.lineX=new Array(samples);
+    for(var s=0;s<samples;s++) combo.lineX[s]=dmin+step*s;
+  }
+  return combos;
+}
+
+function interpLineYFromEqPoints(points, xs){
+  // points: sorted by x, with eqY set; xs: target x grid
+  var out=new Array(xs.length);
+  if(points.length===0){ for(var i=0;i<xs.length;i++) out[i]=NaN; return out; }
+  if(points.length===1){
+    var val=points[0].eqY;
+    for(var i=0;i<xs.length;i++) out[i]=val;
+    return out;
+  }
+  // Build arrays of xi, yi for interpolation
+  var xi=[], yi=[];
+  for(var k=0;k<points.length;k++){
+    var p=points[k]; if(Number.isFinite(p.x) && Number.isFinite(p.eqY)){ xi.push(p.x); yi.push(p.eqY); }
+  }
+  if(xi.length===0){ for(var i2=0;i2<xs.length;i2++) out[i2]=NaN; return out; }
+  // linear interpolation
+  for(var i=0;i<xs.length;i++){
+    var x=xs[i];
+    // locate interval
+    if(x<=xi[0]){ out[i]=yi[0]; continue; }
+    if(x>=xi[xi.length-1]){ out[i]=yi[yi.length-1]; continue; }
+    // binary search
+    var lo=0, hi=xi.length-1;
+    while(hi-lo>1){
+      var mid=(lo+hi)>>1;
+      if(xi[mid]<=x) lo=mid; else hi=mid;
+    }
+    var x0=xi[lo], x1=xi[hi], y0=yi[lo], y1=yi[hi];
+    var t=(x-x0)/(x1-x0);
+    out[i]=y0*(1-t)+y1*t;
+  }
+  return out;
+}
+
+function quantile(arr, q){
+  if(!arr.length) return NaN;
+  var a=arr.slice().sort(function(x,y){return x-y;});
+  var pos=(a.length-1)*q, lo=Math.floor(pos), hi=Math.ceil(pos);
+  if(lo===hi) return a[lo];
+  var h=pos-lo; return a[lo]*(1-h)+a[hi]*h;
+}
+
+/* 核心繪圖：加上繪圖區裁剪，避免任何元素超出繪圖框 */
+function drawChart(combos){
+  var w=chartCanvas.clientWidth, h=chartCanvas.clientHeight, margin=54;
+  ctx.clearRect(0,0,chartCanvas.width,chartCanvas.height);
+  if(!combos || Object.keys(combos).length===0){
+    messageDiv.style.display='block'; messageDiv.textContent='尚未載入資料或無符合篩選的資料列'; legendDiv.innerHTML=''; return;
+  }
+  messageDiv.style.display='none';
+
+  // 軸範圍：同時納入「資料點 value」與「函數點 eq」，再加上函數線 5–95% 分位數擴張（固定開啟）
+  var xMin=Infinity,xMax=-Infinity,yMin=Infinity,yMax=-Infinity, key, i;
+  for(key in combos){
+    var c=combos[key];
+    for(i=0;i<c.points.length;i++){
+      var pt=c.points[i]; var xv=pt.x, dv=pt.dataY, ev=pt.eqY;
+      if(Number.isFinite(xv)){ xMin=Math.min(xMin,xv); xMax=Math.max(xMax,xv); }
+      if(Number.isFinite(dv)){ yMin=Math.min(yMin,dv); yMax=Math.max(yMax,dv); }
+      if(Number.isFinite(ev)){ yMin=Math.min(yMin,ev); yMax=Math.max(yMax,ev); }
+    }
+  }
+  if(!(xMin<xMax)){ xMin-=0.5; xMax+=0.5; }
+  if(!(yMin<yMax)){ yMin-=0.5; yMax+=0.5; }
+
+  // 函數線分位數入軸（固定啟用）
+  var allY=[];
+  for(key in combos){ var cc=combos[key]; if(cc.lineY&&cc.lineY.length){ for(i=0;i<cc.lineY.length;i++){ var v=cc.lineY[i]; if(Number.isFinite(v)) allY.push(v); } } }
+  if(allY.length){
+    var q5=quantile(allY,0.05), q95=quantile(allY,0.95), pad=(q95-q5)*0.12;
+    var yLo=q5-pad, yHi=q95+pad;
+    yMin=Math.min(yMin,yLo); yMax=Math.max(yMax,yHi);
+  }
+
+  var xPad=(xMax-xMin)*0.08, yPad=(yMax-yMin)*0.12; xMin-=xPad; xMax+=xPad; yMin-=yPad; yMax+=yPad;
+
+  function xScale(v){ return margin + (v - xMin)/(xMax - xMin) * (w - 2*margin); }
+  function yScale(v){ return h - margin - (v - yMin)/(yMax - yMin) * (h - 2*margin); }
+
+  // 軸與刻度
+  ctx.strokeStyle='#334155'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(margin, h-margin); ctx.lineTo(w-margin, h-margin); ctx.moveTo(margin, margin); ctx.lineTo(margin, h-margin); ctx.stroke();
+  ctx.fillStyle='#9ca3af'; ctx.font='12px system-ui, sans-serif';
+  var xTicks=6, yTicks=6, text, mtxt;
+  for(i=0;i<=xTicks;i++){ var xv=xMin + i*(xMax-xMin)/xTicks; var xp=xScale(xv); ctx.beginPath(); ctx.moveTo(xp,h-margin); ctx.lineTo(xp,h-margin+4); ctx.stroke(); text=parseFloat(xv.toFixed(4)); mtxt=ctx.measureText(text); ctx.fillText(text, xp-mtxt.width/2, h-margin+16); }
+  for(i=0;i<=yTicks;i++){ var yv=yMin + i*(yMax-yMin)/yTicks; var yp=yScale(yv); ctx.beginPath(); ctx.moveTo(margin-4, yp); ctx.lineTo(margin, yp); ctx.stroke(); text=parseFloat(yv.toFixed(4)); mtxt=ctx.measureText(text); ctx.fillText(text, margin-mtxt.width-6, yp+4); }
+
+  // ====== 繪圖區裁剪開始：任何線/點/虛線都被限制在繪圖框內 ======
+  ctx.save();
+  ctx.beginPath(); ctx.rect(margin, margin, w-2*margin, h-2*margin); ctx.clip();
+
+  // 繪製各組
+  for(key in combos){
+    var c=combos[key];
+
+    // 曲線（由 eq 點線性插值生成 ⇒ 一定通過函數空心點）
+    if(c.lineX && c.lineY && c.lineX.length===c.lineY.length){
+      ctx.save(); ctx.strokeStyle=c.color; ctx.lineWidth=2; ctx.beginPath(); var started=false;
+      for(i=0;i<c.lineX.length;i++){
+        var lx=xScale(c.lineX[i]), ly=yScale(c.lineY[i]); if(!Number.isFinite(ly)) continue;
+        if(!started){ ctx.moveTo(lx,ly); started=true; } else ctx.lineTo(lx,ly);
+      }
+      ctx.stroke(); ctx.restore();
+    }
+
+    // 每筆資料：資料點、函數點、垂直虛線（都在裁剪框內）
+    for(i=0;i<c.points.length;i++){
+      var pt=c.points[i];
+      var xp=xScale(pt.x), ypData=yScale(pt.dataY), ypEq=yScale(pt.eqY);
+
+      if(Number.isFinite(pt.eqY)){
+        ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle=c.color+'80'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(xp, ypData); ctx.lineTo(xp, ypEq); ctx.stroke(); ctx.restore();
+      }
+
+      if(Number.isFinite(pt.eqY)){
+        drawShape(ctx, c.shape, xp, ypEq, 4.5, '#0b1020', c.color); // 函數值（空心）
+      }
+
+      var fill='#94a3b8';
+      if(Number.isFinite(pt.eqY) && Number.isFinite(pt.dataY) && pt.dataY!==0){
+        var diff=Math.abs(pt.eqY-pt.dataY)/(Math.abs(pt.dataY)+1e-12);
+        if(diff<=0.05) { fill='#10b981'; pt.diffCat='ok'; }
+        else if(diff<=0.10) { fill='#f59e0b'; pt.diffCat='warn'; }
+        else { fill='#ef4444'; pt.diffCat='bad'; }
+      }
+      drawShape(ctx, c.shape, xp, ypData, 5.5, fill, c.color); // 資料值（實心）
+    }
+  }
+
+  // ====== 裁剪結束 ======
+  ctx.restore();
+
+  // 圖例
+  legendDiv.innerHTML='';
+  var row=document.createElement('div'); row.className='row'; row.innerHTML='<strong>差異說明：</strong>'; legendDiv.appendChild(row);
+  [{label:'≤5%',color:'#10b981'},{label:'5–10%',color:'#f59e0b'},{label:'≥10%',color:'#ef4444'},{label:'NA',color:'#94a3b8'}].forEach(function(dc){
+    var r=document.createElement('div'); r.className='row';
+    var sw=document.createElement('span'); sw.style.cssText='display:inline-block;width:12px;height:12px;background:'+dc.color+';border-radius:2px';
+    r.appendChild(sw); var t=document.createElement('span'); t.textContent=dc.label; r.appendChild(t); legendDiv.appendChild(r);
+  });
+  var comboTitle=document.createElement('div'); comboTitle.className='row'; comboTitle.innerHTML='<strong>條件線：</strong>'; legendDiv.appendChild(comboTitle);
+  for(key in combos){
+    var cc=combos[key]; var rr=document.createElement('div'); rr.className='row'; var chip=document.createElement('span');
+    chip.style.cssText='display:inline-block;width:12px;height:12px;border-radius:2px;background:'+cc.color; rr.appendChild(chip);
+    var lb=document.createElement('span'); lb.textContent=cc.label; rr.appendChild(lb); legendDiv.appendChild(rr);
+  }
+}
+
+function drawShape(ctx, shape, x, y, size, fill, stroke){
+  ctx.save(); ctx.fillStyle=fill; ctx.strokeStyle=stroke; ctx.lineWidth=1.2; ctx.beginPath();
+  if(shape==='circle'){ ctx.arc(x,y,size,0,Math.PI*2); }
+  else if(shape==='square'){ ctx.rect(x-size,y-size,size*2,size*2); }
+  else if(shape==='triangle'){ ctx.moveTo(x,y-size); ctx.lineTo(x+size,y+size); ctx.lineTo(x-size,y+size); ctx.closePath(); }
+  else if(shape==='diamond'){ ctx.moveTo(x,y-size); ctx.lineTo(x+size,y); ctx.lineTo(x,y+size); ctx.lineTo(x-size,y); ctx.closePath(); }
+  else { ctx.arc(x,y,size,0,Math.PI*2); }
+  ctx.fill(); ctx.stroke(); ctx.restore();
+}
+
+/* ==============================
+   rAF 節流與主更新流程
+   ============================== */
+var rafId=0, pendingReason=null;
+function scheduleUpdate(reason){
+  if(pendingReason==='param' && reason!=='param') pendingReason=reason;
+  else if(!pendingReason) pendingReason=reason;
+  if(rafId) return;
+  rafId=requestAnimationFrame(function(){
+    var r=pendingReason||'unknown'; pendingReason=null; rafId=0; updatePlot({reason:r});
+  });
+}
+
+function updatePlot(opts){
+  var reason=opts && opts.reason ? opts.reason : 'unknown';
+  legendDiv.innerHTML='';
+  if(!csvRows.length){ messageDiv.style.display='block'; messageDiv.textContent='尚未載入資料'; ctx.clearRect(0,0,chartCanvas.width,chartCanvas.height); return; }
+  if(!eqAssign){ messageDiv.style.display='block'; messageDiv.textContent='方程式未定義'; ctx.clearRect(0,0,chartCanvas.width,chartCanvas.height); return; }
+
+  // 只在資料/篩選/X/尺寸/範例切換時重建 combos 與取樣 X
+  if(!combosCache || reason==='csv' || reason==='xchange' || reason==='filter' || reason==='exampleA' || reason==='exampleB' || reason==='resize'){
+    combosCache=buildCombosStructure();
+  }
+  requestEvaluate(); // 只要 eq（全在 Worker）
+}
+
+/* ==============================
+   建立 Web Worker（字串陣列 → Blob；全 ES5）
+   ============================== */
+var worker=null;
+function ensureWorker(){
+  if(worker) return worker;
+  var lines=[];
+  lines.push('(function(){');
+  lines.push('var dataCols={}, rowCount=0, compiled=null, SUPPORT_POW=true;');
+  lines.push('function jsify(s){ return String(s).replace(/\\^/g,"**"); }');
+  lines.push('function parenBalanced(s){ var st=[], c,i; for(i=0;i<s.length;i++){ c=s.charAt(i); if(c==="(") st.push("("); else if(c===")"){ if(!st.length) return false; st.pop(); } } return st.length===0; }');
+  lines.push('function clamp(x,lo,hi){ return Math.max(lo, Math.min(hi, x)); }');
+  lines.push('function inv(z){ return 1/z; }');
+  lines.push('function erf(x){ var sign=x<0?-1:1; x=Math.abs(x); var t=1/(1+0.3275911*x); var a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429; var poly=((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t; var y=1 - poly*Math.exp(-x*x); return sign+y; }');
+  lines.push('function normsInv(p){ if(p<=0||p>=1) return NaN; var a1=-3.969683028665376e+01,a2=2.209460984245205e+02,a3=-2.759285104469687e+02,a4=1.383577518672690e+02,a5=-3.066479806614716e+01,a6=2.506628277459239e+00; var b1=-5.447609879822406e+01,b2=1.615858368580409e+02,b3=-1.556989798598866e+02,b4=6.680131188771972e+01,b5=-1.328068155288572e+01; var c1=-7.784894002430293e-03,c2=-3.223964580411365e-01,c3=-2.400758277161838e+00,c4=-2.549732539343734e+00,c5=4.374664141464968e+00,c6=2.938163982698783e+00; var d1=7.784695709041462e-03,d2=3.224671290700398e-01,d3=2.445134137142996e+00,d4=3.754408661907416e+00; var pLow=0.02425,pHigh=1-pLow,q,r,x; if(p<pLow){ q=Math.sqrt(-2*Math.log(p)); x=(((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q+c6)/((((d1*q+d2)*q+d3)*q+d4)*q+1); } else if(p>pHigh){ q=Math.sqrt(-2*Math.log(1-p)); x=-(((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q+c6)/((((d1*q+d2)*q+d3)*q+d4)*q+1); } else { q=p-0.5; r=q*q; x=(((((a1*r+a2)*r+a3)*r+a4)*r+a5)*r+a6)*q/((((b1*r+b2)*r+b3)*r+b4)*r+b5)*r+1; } var e=0.5*(1-erf(-x/Math.SQRT2))-p; var u=e*Math.SQRT2*Math.exp(x*x/2); x=x - u/(1 + x*u/2); return x; }');
+  lines.push('var helperMap={ clamp:clamp, inv:inv, min:Math.min, max:Math.max, abs:Math.abs, sqrt:Math.sqrt, log:Math.log, LN:Math.log, ln:Math.log, exp:Math.exp, EXP:Math.exp, pow:Math.pow, NORMSINV:normsInv, normsInv:normsInv, erf:erf };');
+  lines.push('function unique(arr){ var out=[], seen={}; for(var i=0;i<arr.length;i++){ var v=arr[i]; if(!seen[v]){ seen[v]=1; out.push(v); } } return out; }');
+  lines.push('function supportPow(){ try{ var F=Function; var fn=F.apply(null, ["return (2**3);"]); var r=fn(); return r===8; }catch(e){ return false; } }');
+  lines.push('SUPPORT_POW = supportPow();');
+  lines.push('function rewritePow(s){ if(SUPPORT_POW) return s; return s.replace(/([^\\s()]+)\\s*\\*\\*\\s*([^\\s()]+)/g, "pow($1,$2)"); }');
+  lines.push('function compile(assignments, eqExpr, params, colNames){');
+  lines.push('  var base=unique(Object.keys(params).concat(colNames).concat(Object.keys(helperMap)));');
+  lines.push('  var assignFns=[], assignNames=[], assignVars=[];');
+  lines.push('  var F=Function;');
+  lines.push('  for(var i=0;i<assignments.length;i++){ var a=assignments[i]; var names=unique(base.slice()); var expr=rewritePow(jsify(a.expr)); if(!parenBalanced(expr)) return {error:"Unbalanced parentheses in assignment: "+a.var};');
+  lines.push('    try{ var args=names.concat("return ( "+expr+" );"); var fn=F.apply(null, args); assignFns.push(fn); assignNames.push(names); assignVars.push(a.var); base.push(a.var); }catch(e){ return {error:"Compile assignment failed: "+a.var+" :: "+String(e)}; } }');
+  lines.push('  var eqFn=null, eqNames=[];');
+  lines.push('  if(eqExpr){ var eq=rewritePow(jsify(eqExpr)); if(!parenBalanced(eq)) return {error:"Unbalanced parentheses in eq"}; var names2=unique(base.slice()); try{ var args2=names2.concat("return ( "+eq+" );"); eqFn=F.apply(null, args2); eqNames=names2; }catch(e){ return {error:"Compile eq failed: "+String(e)}; } }');
+  lines.push('  return { assignFns:assignFns, assignNames:assignNames, assignVars:assignVars, eqFn:eqFn, eqNames:eqNames };');
+  lines.push('}');
+  lines.push('function valuesByNames(names, rowIdx, locals, params){ var out=new Array(names.length), k; for(var i=0;i<names.length;i++){ k=names[i]; if(params.hasOwnProperty(k)) out[i]=params[k]; else if(dataCols.hasOwnProperty(k)) out[i]=dataCols[k][rowIdx]; else if(locals && locals.hasOwnProperty(k)) out[i]=locals[k]; else if(helperMap.hasOwnProperty(k)) out[i]=helperMap[k]; else out[i]=undefined; } return out; }');
+  lines.push('onmessage=function(ev){ var d=ev.data; var cmd=d&&d.cmd; try{');
+  lines.push('  if(cmd==="load"){ dataCols=d.cols||{}; rowCount=d.rowCount||0; postMessage({ok:true,cmd:"load"}); return; }');
+  lines.push('  if(cmd==="compile"){ var r=compile(d.assignments||[], d.eq||"", d.params||{}, d.colNames||[]); if(r.error){ postMessage({error:r.error, cmd:"compile"}); return; } compiled=r; postMessage({ok:true,cmd:"compile"}); return; }');
+  lines.push('  if(cmd==="evalAll"){ if(!compiled||!compiled.eqFn){ postMessage({error:"Not compiled"}); return; } var eqY=new Float64Array(rowCount); for(var i=0;i<rowCount;i++){ var locals={}; for(var j=0;j<compiled.assignFns.length;j++){ var vals=valuesByNames(compiled.assignNames[j], i, locals, d.params||{}); var v=NaN; try{ v=compiled.assignFns[j].apply(null, vals); }catch(e){ v=NaN; } locals[compiled.assignVars[j]]=v; } var eqVals=valuesByNames(compiled.eqNames, i, locals, d.params||{}); var y=NaN; try{ y=compiled.eqFn.apply(null, eqVals); }catch(e){ y=NaN; } eqY[i]=y; } postMessage({ok:true,cmd:"evalAll", eqY:eqY}, [eqY.buffer]); return; }');
+  // 自動化測試（Worker 範圍）
+  lines.push('  if(cmd==="selftest"){ var res={};');
+  lines.push('    (function(){ var cols={ v1:new Float64Array([0.1,0.2]), v2:new Float64Array([0,0]) }; dataCols=cols; rowCount=2; var P={a:1,b:2,c:3}; var R=compile([], "c + b*v2 + a*v1", P, ["v1","v2"]); if(R.error){ res.basic=false; } else { compiled=R; var eqY=new Float64Array(2); for(var i=0;i<2;i++){ var locals={}; var e=valuesByNames(compiled.eqNames, i, locals, P); eqY[i]=compiled.eqFn.apply(null, e); } res.basic=(Math.abs(eqY[0]-3.1)<1e-12 && Math.abs(eqY[1]-3.2)<1e-12); var xs=new Float64Array([0,0.5,1]); var ys=new Float64Array(xs.length); for(var k=0;k<xs.length;k++){ var l={}; var ev=[P.a, P.b, P.c, xs[k], 0]; } res.lineLen=(xs.length===3); } })();');
+  lines.push('    (function(){ var R=compile([], "c + (b*v2 + a*v1", {a:1,b:2,c:3}, ["v1","v2"]); res.parenError=!!(R && R.error); })();');
+  lines.push('    (function(){ var R=compile([{var:"aa",expr:"v1*v1"},{var:"bb",expr:"v1+v2"}], "aa + bb + clamp(v1,0,1) - inv(10)", {a:0}, ["v1","v2"]); compiled=R; dataCols={v1:new Float64Array([0.1]), v2:new Float64Array([0])}; rowCount=1; var locals={}; for(var j=0;j<compiled.assignFns.length;j++){ var valsA=valuesByNames(compiled.assignNames[j], 0, locals, {}); var vv=NaN; try{ vv=compiled.assignFns[j].apply(null, valsA); }catch(e){ vv=NaN; } locals[compiled.assignVars[j]]=vv; } var vals=valuesByNames(compiled.eqNames, 0, locals, {}); var y=compiled.eqFn.apply(null, vals); res.assignHelper=Math.abs(y-0.11)<1e-9; })();');
+  lines.push('    (function(){ var R=compile([], "v1+1", {}, ["v1"]); res.noUseStrict=!!(R && R.eqFn); })();');
+  lines.push('    postMessage({ok:true,cmd:"selftest", res:res}); return; }');
+  lines.push('}catch(err){ postMessage({error:String(err),cmd:cmd||"unknown"}); } };');
+  lines.push('})();');
+  var blob=new Blob([lines.join('\n')], {type:'application/javascript'});
+  var url=URL.createObjectURL(blob);
+  worker=new Worker(url);
+  worker.onmessage=function(ev){ handleWorkerMessage(ev.data); };
+  worker.onerror=function(e){ showError("Worker 執行錯誤："+String(e.message||e.filename||e.lineno)); };
+  return worker;
+}
+
+/* ==============================
+   與 Worker 溝通
+   ============================== */
+function handleWorkerMessage(msg){
+  if(msg && msg.error){ showError("Worker 回報錯誤：\n"+msg.error); return; }
+  if(!msg || !msg.cmd) return;
+  if(msg.cmd==='evalAll'){
+    eqYCache=msg.eqY;
+    // 把 eqY 寫回各組的 points，然後以 eq 點做線性插值生成線
+    if(combosCache){
+      for(var key in combosCache){
+        var c=combosCache[key];
+        for(var i=0;i<c.points.length;i++){
+          var idx=c.points[i].idx; c.points[i].eqY = (eqYCache && idx<eqYCache.length)? eqYCache[idx] : NaN;
+        }
+        if(c.lineX && c.lineX.length){
+          c.lineY = interpLineYFromEqPoints(c.points, c.lineX);
+        } else {
+          c.lineY = [];
+        }
+      }
+      drawChart(combosCache);
+    }
+  } else if(msg.cmd==='selftest'){ showTests(msg.res||{}); }
+}
+
+function showError(text){
+  messageDiv.style.display='block';
+  messageDiv.textContent=String(text);
+}
+
+function requestEvaluate(){
+  ensureWorker();
+  worker.postMessage({ cmd:'compile', assignments:assignments, eq: (eqAssign?eqAssign.expr:""), params:params, colNames:colNames });
+  worker.postMessage({ cmd:'evalAll', params:params });
+}
+
+/* ==============================
+   檔案載入與按鈕互動
+   ============================== */
+document.getElementById('csvFile').addEventListener('change', function(e){
+  var file=e.target.files[0]; if(!file) return;
+  var reader=new FileReader();
+  reader.onload=function(ev){
+    try{
+      csvRows=parseCSV(String(ev.target.result)); if(!csvRows.length){ showError('CSV 檔案無有效資料列'); return; }
+      populateXSelect(); buildFilters(); buildParamControls();
+      // 建立 TypedArray 並傳給 Worker（Transferables）
+      var colsObj={}, transfers=[];
+      for(var i=0;i<colNames.length;i++){ var name=colNames[i]; var arr=new Float64Array(csvRows.length); for(var r=0;r<csvRows.length;r++) arr[r]=Number(csvRows[r][name]); colsObj[name]=arr; transfers.push(arr.buffer); }
+      var valArr=new Float64Array(csvRows.length); for(var r2=0;r2<csvRows.length;r2++) valArr[r2]=Number(csvRows[r2][valueKey]); colsObj[valueKey]=valArr; transfers.push(valArr.buffer);
+      ensureWorker(); worker.postMessage({ cmd:'load', cols:colsObj, rowCount:csvRows.length }, transfers);
+      requestEvaluate(); scheduleUpdate('csv');
+    }catch(err){ showError('CSV 解析錯誤：'+String(err)); }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('txtFile').addEventListener('change', function(e){
+  var file=e.target.files[0]; if(!file) return;
+  var reader=new FileReader();
+  reader.onload=function(ev){
+    try{
+      parseTXT(String(ev.target.result));
+      equationInput.value = assignments.map(function(a){return a.var+' = '+a.expr;}).join('\n') + (eqAssign? '\neq = '+eqAssign.expr : '');
+      buildParamControls(); requestEvaluate(); scheduleUpdate('txt');
+    }catch(err){ showError('TXT 解析錯誤：'+String(err)); }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('applyEquation').addEventListener('click', function(){
+  try{
+    var lines=equationInput.value.split(/\n+/); assignments=[]; eqAssign=null;
+    for(var i=0;i<lines.length;i++){
+      var line=lines[i].trim(); if(!line) continue;
+      var idx=line.indexOf('='); if(idx<0) continue;
+      var key=sanitizeName(line.slice(0,idx).trim()); var expr=line.slice(idx+1).trim();
+      if(key==='eq') eqAssign={ "var":"eq", "expr":expr }; else assignments.push({ "var":key, "expr":expr });
+    }
+    requestEvaluate(); scheduleUpdate('applyEq');
+  }catch(err){ alert('方程式解析錯誤：'+String(err)); }
+});
+
+resetParamsBtn.addEventListener('click', function(){
+  params={}; var keys=Object.keys(initParams); for(var i=0;i<keys.length;i++){ params[keys[i]]=initParams[keys[i]]; }
+  buildParamControls(); requestEvaluate(); scheduleUpdate('reset');
+});
+
+document.getElementById('exampleA').addEventListener('click', function(){ loadExample(exampleAData, exampleAEq, 'exampleA'); });
+document.getElementById('exampleB').addEventListener('click', function(){ loadExample(exampleBData, exampleBEq, 'exampleB'); });
+
+function loadExample(csvText, txtText, reason){
+  csvRows=parseCSV(csvText); parseTXT(txtText);
+  equationInput.value = assignments.map(function(a){return a.var+' = '+a.expr;}).join('\n') + (eqAssign? '\neq = '+eqAssign.expr : '');
+  populateXSelect(); buildFilters(); buildParamControls();
+  // 準備 TypedArray → Worker
+  var colsObj={}, transfers=[];
+  for(var i=0;i<colNames.length;i++){ var name=colNames[i]; var arr=new Float64Array(csvRows.length); for(var r=0;r<csvRows.length;r++) arr[r]=Number(csvRows[r][name]); colsObj[name]=arr; transfers.push(arr.buffer); }
+  var valArr=new Float64Array(csvRows.length); for(var r2=0;r2<csvRows.length;r2++) valArr[r2]=Number(csvRows[r2][valueKey]); colsObj[valueKey]=valArr; transfers.push(valArr.buffer);
+  ensureWorker(); worker.postMessage({ cmd:'load', cols:colsObj, rowCount:csvRows.length }, transfers);
+  requestEvaluate(); combosCache=null; scheduleUpdate(reason||'example');
+}
+
+/* ==============================
+   測試（300ms 後觸發；不可刪，可折疊）
+   ============================== */
+function runTests(){
+  testPanel.style.display='block';
+  testBody.innerHTML='<div>執行內建測試中…</div>';
+  testBadge.textContent='執行中…';
+
+  var results={};
+
+  // 1. parseTXT
+  (function(){
+    try {
+      parseTXT(exampleAEq);
+      var ok1=!!eqAssign && eqAssign.var==='eq';
+      var ok2=('a' in params)&&('b' in params)&&('c' in params);
+      results.parseTXT = ok1 && ok2;
+    } catch(e){ results.parseTXT=false; }
+  })();
+
+  // 2. parseCSV (示例B 2列)
+  (function(){
+    try { var rows=parseCSV(exampleBData); results.parseCSV = (rows.length===2); } catch(e){ results.parseCSV=false; }
+  })();
+
+  // 3-6 Worker 自測
+  ensureWorker();
+  worker.postMessage({ cmd:'selftest' });
+
+  // 暫存前兩項；其餘由 worker 回傳後合併
+  testPanel._pre = results;
+}
+
+function showTests(workerRes){
+  var res = testPanel._pre || {};
+  res.basic = !!workerRes.basic;
+  res.lineLen = !!workerRes.lineLen;
+  res.parenError = !!workerRes.parenError;
+  res.assignHelper = !!workerRes.assignHelper;
+  res.noUseStrict = !!workerRes.noUseStrict;
+
+  var items=[
+    {k:'parseTXT', name:'parseTXT：可解析 eqAssign；[PARAMS] 含 a,b,c'},
+    {k:'parseCSV', name:'parseCSV：示例 B 有 2 列'},
+    {k:'basic', name:'Worker 基本正確性：eqY=[3.1,3.2]'},
+    {k:'lineLen', name:'Worker 連續曲線：lines.length=1 且長度=3'},
+    {k:'parenError', name:'Worker 括號錯誤：不平衡括號回報 {error}'},
+    {k:'assignHelper', name:'Worker 前置 + helper：在 v1=0.1,v2=0 回 0.11'},
+    {k:'noUseStrict', name:'回歸測試：移除 "use strict" 仍可編譯'}
+  ];
+  var okAll=true, okCnt=0, html='';
+  for(var i=0;i<items.length;i++){
+    var it=items[i]; var ok=!!res[it.k]; if(!ok) okAll=false; else okCnt++;
+    html+='<div>'+(ok?'<span class="ok">✔</span>':'<span class="fail">✘</span>')+' '+it.name+'</div>';
+  }
+  testBody.innerHTML=html;
+  testBadge.textContent=(okAll?'全數通過 ':'部分通過 ')+okCnt+'/'+items.length;
+  // 預設收合
+  testDetails.open=false;
+}
+
+/* ==============================
+   啟動
+   ============================== */
+function init(){
+  updateControlsHeightVar(); resizeCanvas();
+  // 預設載入「示例 A」
+  loadExample(exampleAData, exampleAEq, 'exampleA');
+  // 300ms 後啟動測試
+  setTimeout(runTests, 300);
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+</script>
+</body>
+</html>
