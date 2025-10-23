@@ -725,8 +725,8 @@ function ensureWorker(){
   lines.push('function vecFromFull(P, keys){ var v=new Array(keys.length), i; for(i=0;i<keys.length;i++) v[i]=P[keys[i]]; return v; }');
 
   /* Nelder–Mead / Powell */
-  lines.push('function nmRefine(P0, keys, target, opts){ var timeEnd=Date.now()+((opts&&opts.timeBudget)||200); function evalP(P){ return objective(P, target, opts); } var d=keys.length; if(d===0) return {P:P0, obj:evalP(P0)}; var bounds=opts.bounds||{}; var x0=vecFromFull(P0, keys); var span=[], i; for(i=0;i<d;i++){ var k=keys[i]; var b=bounds[k]; var s=b? (b.max-b.min): Math.abs(P0[k])||1; span[i]=Math.max(1e-6, s*0.1); } var simplex=[]; simplex.push({x:x0.slice(), f:evalP(P0)}); for(i=0;i<d;i++){ var xi=x0.slice(); xi[i]=xi[i]+span[i]; var Pi=fullFromTuned(P0, keys, xi, bounds); simplex.push({x:xi, f:evalP(Pi)}); if(Date.now()>timeEnd) break; } var alpha=1, gamma=2, rho=0.5, sigma=0.5; function sortS(){ simplex.sort(function(a,b){ return a.f-b.f; }); } sortS(); while(Date.now()<timeEnd){ sortS(); var best=simplex[0]; var worst=simplex[simplex.length-1]; var second=simplex[simplex.length-2]; var xc=new Array(d), j; for(j=0;j<d;j++){ var sum=0; for(i=0;i<simplex.length-1;i++) sum+=simplex[i].x[j]; xc[j]=sum/(simplex.length-1); } function proj(v){ for(var q=0;q<d;q++){ var kk=keys[q], b=bounds[kk]; if(b){ if(v[q]<b.min) v[q]=b.min; if(v[q]>b.max) v[q]=b.max; } } return v; } var xr=new Array(d); for(i=0;i<d;i++) xr[i]=xc[i]+alpha*(xc[i]-worst.x[i]); xr=proj(xr); var Pr=fullFromTuned(P0, keys, xr, bounds); var fr=evalP(Pr); if(fr<best.f){ var xe=new Array(d); for(i=0;i<d;i++) xe[i]=xc[i]+gamma*(xr[i]-xc[i]); xe=proj(xe); var Pe=fullFromTuned(P0, keys, xe, bounds); var fe=evalP(Pe); if(fe<fr){ simplex[simplex.length-1]={x:xe,f:fe}; } else { simplex[simplex.length-1]={x:xr,f:fr}; } } else if(fr<second.f){ simplex[simplex.length-1]={x:xr,f:fr}; } else { var xc2=new Array(d); for(i=0;i<d;i++) xc2[i]=xc[i]+rho*(worst.x[i]-xc[i]); xc2=proj(xc2); var Pc=fullFromTuned(P0, keys, xc2, bounds); var fc=evalP(Pc); if(fc<worst.f){ simplex[simplex.length-1]={x:xc2,f:fc}; } else { var bestx=simplex[0].x; for(var j2=1;j2<simplex.length;j2++){ var xj=new Array(d); for(i=0;i<d;i++) xj[i]=bestx[i]+sigma*(simplex[j2].x[i]-bestx[i]); xj=proj(xj); simplex[j2].x=xj; var Pj=fullFromTuned(P0, keys, xj, bounds); simplex[j2].f=evalP(Pj); } } } } sortS(); var Pb=fullFromTuned(P0, keys, simplex[0].x, bounds); return {P:Pb, obj:simplex[0].f}; }');
-  lines.push('function powellLike(P0, keys, target, opts){ var timeEnd=Date.now()+((opts&&opts.timeBudget)||200), bounds=opts.bounds||{}; function copyAll(P){ var o={}, ks=Object.keys(P); for(var i=0;i<ks.length;i++) o[ks[i]]=P[ks[i]]; return o; } function shuffle(a){ for(var i=a.length-1;i>0;i--){ var j=(Math.floor(Math.random()*(i+1))); var t=a[i]; a[i]=a[j]; a[j]=t; } } function evalP(P){ return objective(P,target,opts); } var P=copyAll(P0); var step={}, i; for(i=0;i<keys.length;i++){ var k=keys[i]; var b=bounds[k]; var span=b? (b.max-b.min): Math.abs(P[k])||1; step[k]=Math.max(1e-6, span/6); } var obj=evalP(P), bestObj=obj, bestP=copyAll(P), stagnate=0; while(Date.now()<timeEnd){ var order=keys.slice(); shuffle(order); var improved=false; for(var oi=0; oi<order.length; oi++){ var k=order[oi]; var s=step[k]; if(s<1e-9) continue; var Pp=copyAll(P); Pp[k]=Math.min(bounds[k]?bounds[k].max:1/0, (Pp[k]+s)); var objP=evalP(Pp); var Pm=copyAll(P); Pm[k]=Math.max(bounds[k]?bounds[k].min:-1/0, (Pm[k]-s)); var objM=evalP(Pm); if(objP<obj && objP<=objM){ P=Pp; obj=objP; improved=true; } else if(objM<obj){ P=Pm; obj=objM; improved=true; } else { step[k]=s*0.5; } if(obj<bestObj){ bestObj=obj; bestP=copyAll(P); } if(Date.now()>timeEnd) break; } if(!improved){ stagnate++; if(stagnate>3){ var small=true; for(i=0;i<keys.length;i++){ if(step[keys[i]]>=1e-6){ small=false; break; } } if(small) break; } } else stagnate=0; } return {P:bestP, obj:bestObj}; }');
+  lines.push('function nmRefine(P0, keys, target, opts){ var timeEnd=Date.now()+((opts&&opts.timeBudget)||200); function evalP(P){ return objective(P, target, opts); } var d=keys.length; if(d===0) return {P:P0, obj:evalP(P0)}; var bounds=opts.bounds||{}; var x0=vecFromFull(P0, keys); var span=[], i,j; for(i=0;i<d;i++){ var k=keys[i]; var b=bounds[k]; var s=b? (b.max-b.min): Math.abs(P0[k])||1; span[i]=Math.max(1e-6, s*0.1); } var simplex=[]; simplex.push({x:x0.slice(), f:evalP(P0)}); for(i=0;i<d;i++){ var xi=x0.slice(); xi[i]=xi[i]+span[i]; var Pi=fullFromTuned(P0, keys, xi, bounds); simplex.push({x:xi, f:evalP(Pi)}); if(Date.now()>timeEnd) break; } var alpha=1, gamma=2, rho=0.5, sigma=0.5; function sortS(){ simplex.sort(function(a,b){ return a.f-b.f; }); } sortS(); while(Date.now()<timeEnd){ sortS(); var best=simplex[0]; var worst=simplex[simplex.length-1]; var second=simplex[simplex.length-2]; var xc=new Array(d), j; for(j=0;j<d;j++){ var sum=0; for(i=0;i<simplex.length-1;i++) sum+=simplex[i].x[j]; xc[j]=sum/(simplex.length-1); } function proj(v){ for(var q=0;q<d;q++){ var kk=keys[q], b=bounds[kk]; if(b){ if(v[q]<b.min) v[q]=b.min; if(v[q]>b.max) v[q]=b.max; } } return v; } var xr=new Array(d); for(i=0;i<d;i++) xr[i]=xc[i]+alpha*(xc[i]-worst.x[i]); xr=proj(xr); var Pr=fullFromTuned(P0, keys, xr, bounds); var fr=evalP(Pr); if(fr<best.f){ var xe=new Array(d); for(i=0;i<d;i++) xe[i]=xc[i]+gamma*(xr[i]-xc[i]); xe=proj(xe); var Pe=fullFromTuned(P0, keys, xe, bounds); var fe=evalP(Pe); if(fe<fr){ simplex[simplex.length-1]={x:xe,f:fe}; } else { simplex[simplex.length-1]={x:xr,f:fr}; } } else if(fr<second.f){ simplex[simplex.length-1]={x:xr,f:fr}; } else { var xc2=new Array(d); for(i=0;i<d;i++) xc2[i]=xc[i]+rho*(worst.x[i]-xc[i]); xc2=proj(xc2); var Pc=fullFromTuned(P0, keys, xc2, bounds); var fc=evalP(Pc); if(fc<worst.f){ simplex[simplex.length-1]={x:xc2,f:fc}; } else { var bestx=simplex[0].x; for(var j2=1;j2<simplex.length;j2++){ var xj=new Array(d); for(i=0;i<d;i++) xj[i]=bestx[i]+sigma*(simplex[j2].x[i]-bestx[i]); xj=proj(xj); simplex[j2].x=xj; var Pj=fullFromTuned(P0, keys, xj, bounds); simplex[j2].f=evalP(Pj); } } } } sortS(); var Pb=fullFromTuned(P0, keys, simplex[0].x, bounds); return {P:Pb, obj:simplex[0].f}; }');
+  lines.push('function powellLike(P0, keys, target, opts){ var timeEnd=Date.now()+((opts&&opts.timeBudget)||200), bounds=opts.bounds||{}; function copyAll(P){ var o={}, ks=Object.keys(P); for(var i=0;i<ks.length;i++) o[ks[i]]=P[ks[i]]; } function shuffle(a){ for(var i=a.length-1;i>0;i--){ var j=(Math.floor(Math.random()*(i+1))); var t=a[i]; a[i]=a[j]; a[j]=t; } } function evalP(P){ return objective(P,target,opts); } var P={}; var kk=Object.keys(P0); for(var ii=0;ii<kk.length;ii++){ P[kk[ii]]=P0[kk[ii]]; } var step={}, i; for(i=0;i<keys.length;i++){ var k=keys[i]; var b=bounds[k]; var span=b? (b.max-b.min): Math.abs(P[k])||1; step[k]=Math.max(1e-6, span/6); } var obj=evalP(P), bestObj=obj, bestP={}; kk=Object.keys(P); for(i=0;i<kk.length;i++){ var K=kk[i]; bestP[K]=P[K]; } var stagnate=0; while(Date.now()<timeEnd){ var order=keys.slice(); shuffle(order); var improved=false; for(var oi=0; oi<order.length; oi++){ var k=order[oi]; var s=step[k]; if(s<1e-9) continue; var Pp={}, Pm={}; kk=Object.keys(P); for(i=0;i<kk.length;i++){ var K2=kk[i]; Pp[K2]=P[K2]; Pm[K2]=P[K2]; } var bnd=bounds[k]; var xmax=bnd&&bnd.max!=null? bnd.max:1/0; var xmin=bnd&&bnd.min!=null? bnd.min:-1/0; Pp[k]=Math.min(xmax, (Pp[k]+s)); Pm[k]=Math.max(xmin, (Pm[k]-s)); var objP=evalP(Pp); var objM=evalP(Pm); if(objP<obj && objP<=objM){ P=Pp; obj=objP; improved=true; } else if(objM<obj){ P=Pm; obj=objM; improved=true; } else { step[k]=s*0.5; } if(obj<bestObj){ bestObj=obj; bestP={}; kk=Object.keys(P); for(i=0;i<kk.length;i++){ var K3=kk[i]; bestP[K3]=P[K3]; } } if(Date.now()>timeEnd) break; } if(!improved){ stagnate++; if(stagnate>3){ var small=true; for(i=0;i<keys.length;i++){ if(step[keys[i]]>=1e-6){ small=false; break; } } if(small) break; } } else stagnate=0; } return {P:bestP, obj:bestObj}; }');
 
   /* SPSA */
   lines.push('function spsaStage(P0, keys, target, opts){ var steps=opts.spsaSteps||0; if(steps<=0 || keys.length===0) return {P:P0, obj:objective(P,target,opts)}; var timeEnd=Date.now()+((opts&&opts.timeBudget)||200); var a0=opts.spsaA||0.1, c0=opts.spsaC||0.05; var alpha=0.602, gamma=0.101; function copyAll(P){ var o={}, ks=Object.keys(P); for(var i=0;i<ks.length;i++){ var k=ks[i]; o[k]=P[k]; } return o; } var P=copyAll(P0); var bestP=copyAll(P0); var bestObj=objective(P,target,opts); var j; var scale={}; for(j=0;j<keys.length;j++){ var k=keys[j]; var b=(opts.bounds||{})[k]; var span=b? (b.max-b.min): Math.max(1, Math.abs(P0[k])||1); scale[k]=Math.max(1e-9, span); } for(var i=0;i<steps;i++){ var ak=a0/Math.pow(i+1,alpha), ck=c0/Math.pow(i+1,gamma); var Pp=copyAll(P), Pm=copyAll(P); for(j=0;j<keys.length;j++){ var s=(Math.random()<0.5?-1:1); var key=keys[j]; var b=(opts.bounds||{})[key]; var step=ck*scale[key]*s; var xmax=b&&b.max!=null? b.max : 1/0; var xmin=b&&b.min!=null? b.min : -1/0; Pp[key]=Math.min(xmax, P[key] + step); Pm[key]=Math.max(xmin, P[key] - step); Pp["__d"+j]=s; } var fP=objective(Pp,target,opts), fM=objective(Pm,target,opts); for(j=0;j<keys.length;j++){ var key2=keys[j]; var di=Pp["__d"+j]; var g=(fP - fM)/(2*ck*scale[key2]*di); var nv=P[key2] - ak * g; var b2=(opts.bounds||{})[key2]; if(b2){ if(nv<b2.min) nv=b2.min; if(nv>b2.max) nv=b2.max; } P[key2]=nv; } var fo=objective(P,target,opts); if(fo<bestObj){ bestObj=fo; bestP=copyAll(P); } if(Date.now()>timeEnd) break; } return {P:bestP, obj:bestObj}; }');
@@ -741,12 +741,11 @@ function ensureWorker(){
   lines.push('  if(cmd==="compile"){ var r=compile(d.assignments||[], d.eq||"", d.params||{}, d.colNames||[]); if(r.error){ postMessage({error:r.error, cmd:"compile"}); return; } compiled=r; postMessage({ok:true,cmd:"compile"}); return; }');
   lines.push('  if(cmd==="evalAll"){ if(!compiled||!compiled.eqFn){ postMessage({error:"Not compiled"}); return; } var eqY=new Float64Array(rowCount); for(var i=0;i<rowCount;i++){ eqY[i]=computeEqAtRow(compiled, i, d.params||{}); } postMessage({ok:true,cmd:"evalAll", eqY:eqY}, [eqY.buffer]); return; }');
   lines.push('  if(cmd==="evalIdx"){ if(!compiled||!compiled.eqFn){ postMessage({error:"Not compiled"}); return; } var idxArr=d.idxArr||null; if(!idxArr||!idxArr.length){ postMessage({ok:true,cmd:"evalIdx", idx:new Uint32Array(0), y:new Float64Array(0)}); return; } var n=idxArr.length; var y=new Float64Array(n); var i; for(i=0;i<n;i++){ var idx=idxArr[i]; y[i]=computeEqAtRow(compiled, idx, d.params||{}); } postMessage({ok:true,cmd:"evalIdx", idx:idxArr, y:y}, [idxArr.buffer, y.buffer]); return; }');
-  /* ★ 修正：同 baseRow 真實取樣，支援 forPts，讓函數點與函數線來自同一評估來源 */
   lines.push('  if(cmd==="evalLine"){ if(!compiled||!compiled.eqFn){ postMessage({error:"Not compiled"}); return; } var xs=d.xs; var baseIdx=d.baseIdx||0; var xName=d.xVarName; var P=d.params||{}; var n=xs.length; var y=new Float64Array(n); var i; for(i=0;i<n;i++){ var ov={}; ov[xName]=xs[i]; y[i]=computeEqAtRowOV(compiled, baseIdx, P, ov); } postMessage({ok:true,cmd:"evalLine", key:d.comboKey, y:y, forPts: !!d.forPts}, [y.buffer]); return; }');
 
   lines.push('  if(cmd==="autotuneCancel"){ autotuneCancel=true; postMessage({ok:true,cmd:"autotuneCancelAck"}); return; }');
 
-  /* autotune：固定子樣本 + 多起點 + SPSA + 局部精煉 */
+  /* autotune */
   lines.push('  if(cmd==="autotune"){ autotuneCancel=false; ');
   lines.push('    var assigns=d.assignments||[], eqStr=d.eq||"", P0=d.params||{}, bounds=d.bounds||{}, colNames=d.colNames||[], valueKey=d.valueKey||"value";');
   lines.push('    var metric=d.metric||"rel";');
@@ -800,19 +799,28 @@ function handleWorkerMessage(msg){
   else if(msg.cmd==='compile'){ compiledReady=true; needsCompile=false; doPendingEval(); }
   else if(msg.cmd==='evalAll'){
     var eqY=msg.eqY; ensureEqCache(); for(var i=0;i<eqY.length;i++) eqYCache[i]=eqY[i];
+    // 不再直接映入點；點一律用 base-row + override X
     mapEqYIntoCombosAndDraw();
   } else if(msg.cmd==='evalIdx'){
     var idx=msg.idx, y=msg.y; ensureEqCache(); for(var i=0;i<idx.length;i++){ var k=idx[i]; eqYCache[k]=y[i]; }
+    // 不再直接映入點；點一律用 base-row + override X
     mapEqYIntoCombosAndDraw();
   } else if(msg.cmd==='evalLine'){
     if(combosCache && combosCache[msg.key]){
       if(msg.forPts){
+        // 回填點：兩種模式皆採用 base-row + override X
         var c=combosCache[msg.key];
-        var yArr=msg.y; // 與 points 依序對齊（points 已按 x 排序）
-        for(var i=0;i<Math.min(c.points.length, yArr.length); i++){
-          c.points[i].eqY = yArr[i];
+        var yArr=msg.y;
+        var n=Math.min(c.points.length, yArr.length);
+        for(var i=0;i<n; i++){ c.points[i].eqY = yArr[i]; }
+        // 若「未勾選真實取樣」，線用點做內插
+        if(!(realSampleChk && realSampleChk.checked)){
+          if(c.lineX && c.lineX.length){
+            c.lineY = interpLineYFromEqPoints(c.points, c.lineX);
+          }
         }
       }else{
+        // 回填「線的真實取樣」
         combosCache[msg.key].lineY = Array.prototype.slice.call(msg.y);
       }
     }
@@ -836,50 +844,48 @@ function handleWorkerMessage(msg){
 function showError(text){ messageDiv.style.display='block'; messageDiv.textContent=String(text); }
 function ensureEqCache(){ if(!eqYCache || eqYCache.length!==csvRows.length){ eqYCache=new Float64Array(csvRows.length); for(var i=0;i<eqYCache.length;i++) eqYCache[i]=NaN; } }
 
-/* 真實取樣：主執行緒送批給 Worker（線 + 點） */
-function requestEvalLinesReal(){
+/* ★ 新：統一由 Worker 計算「資料點的函數值」；未勾選真實取樣＝只算點，線用內插；勾選＝點+線都真實取樣 */
+function requestEvalForCombos(){
   if(!combosCache) return;
   ensureWorker();
   if(!compiledReady || needsCompile){
     worker.postMessage({ cmd:'compile', assignments:assignments, eq:(eqAssign?eqAssign.expr:""), params:params, colNames:colNames });
     return;
   }
+  var wantRealLine = !!(realSampleChk && realSampleChk.checked);
   for(var key in combosCache){
     var c=combosCache[key];
-    if(c.lineX && c.lineX.length){
-      var xs=new Float64Array(c.lineX.length);
-      for(var i=0;i<c.lineX.length;i++) xs[i]=c.lineX[i];
-      worker.postMessage({ cmd:'evalLine', xs:xs, baseIdx:c.baseIdx, xVarName:xVar, params:params, comboKey:key }, [xs.buffer]);
-    }
+    // 先算點（forPts = true）
     if(c.points && c.points.length){
       var xsPts=new Float64Array(c.points.length);
       for(var j=0;j<c.points.length;j++) xsPts[j]=c.points[j].x;
       worker.postMessage({ cmd:'evalLine', xs:xsPts, baseIdx:c.baseIdx, xVarName:xVar, params:params, comboKey:key, forPts:true }, [xsPts.buffer]);
     }
+    // 再視需求是否算線的真實取樣
+    if(wantRealLine && c.lineX && c.lineX.length){
+      var xs=new Float64Array(c.lineX.length);
+      for(var i=0;i<c.lineX.length;i++) xs[i]=c.lineX[i];
+      worker.postMessage({ cmd:'evalLine', xs:xs, baseIdx:c.baseIdx, xVarName:xVar, params:params, comboKey:key }, [xs.buffer]);
+    }else{
+      // 未勾選：等 forPts 回來後在 handleWorkerMessage 內插
+      c.lineY = []; // 先清空，避免上一輪殘留
+    }
   }
 }
 
-/* 將 eqY 映回各組點，並決定曲線（內插或真實取樣） */
+/* 將（僅用於軸域推估的）eqY 映回圖時，現在不再用於點，僅保留以後需要時擴展 */
 function mapEqYIntoCombosAndDraw(){
   if(!combosCache) return;
+  // 先清掉點的 eqY，等待 Worker（統一策略）
   for(var key in combosCache){
     var c=combosCache[key];
-    if(realSampleChk && realSampleChk.checked){
-      // ★ 真實取樣：先清空函數點，等待 worker 回填（以 baseRow+覆寫X 同源計算）
-      for(var i=0;i<c.points.length;i++){ c.points[i].eqY = NaN; }
-      c.lineY = []; // 交由 requestEvalLinesReal() 回填
-    }else{
-      // 快速模式：函數點直接用實際各列的 eq 計算結果
-      for(var i2=0;i2<c.points.length;i2++){ var idx=c.points[i2].idx; c.points[i2].eqY=(eqYCache && idx<eqYCache.length)? eqYCache[idx] : NaN; }
-      c.lineY = (c.lineX&&c.lineX.length)? interpLineYFromEqPoints(c.points, c.lineX) : [];
+    for(var i=0;i<c.points.length;i++){ c.points[i].eqY = NaN; }
+    if(!(realSampleChk && realSampleChk.checked)){
+      c.lineY = []; // 線待 forPts 回來後用內插補
     }
   }
-  if(realSampleChk && realSampleChk.checked){
-    drawChart(combosCache);      // 先畫一次（點暫為 NaN，不會畫出虛線）
-    requestEvalLinesReal();      // 異步回來逐條更新
-  }else{
-    drawChart(combosCache);
-  }
+  drawChart(combosCache);      // 先畫一次（點暫為 NaN，不會畫出虛線）
+  requestEvalForCombos();      // 發送計算請求
 }
 
 function getFilteredRowIdxs(){
