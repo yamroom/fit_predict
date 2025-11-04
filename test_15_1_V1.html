@@ -1,0 +1,1898 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CSV × 方程對齊（SWIS + 游標檢視器 + 獨立方程面板 + 參數複製 + 參數搜尋 + 鎖定到控制列）</title>
+<style>
+  :root { --controls-h: 3.25rem; }
+  html,body { height:100%; }
+  body { margin:0; background:#0b1020; color:#e5e7eb; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif; overflow:hidden; }
+  #controls{ position:fixed; top:0; left:0; right:0; z-index:20; display:flex; flex-wrap:wrap; align-items:center; gap:0.5rem; padding:0.5rem; background:#111827; border-bottom:1px solid #374151; }
+  #controls h1{ margin:0; font-size:1.05rem; color:#60a5fa; white-space:nowrap; }
+  #controls label{ display:flex; align-items:center; gap:0.25rem; font-size:0.85rem; white-space:nowrap; }
+  #controls input[type="file"]{ color:#e5e7eb; background:#1f2937; border:1px solid #374151; padding:0.25rem; }
+  #controls select,#controls button,#controls input[type="checkbox"],#controls input[type="text"]{
+    background:#1f2937; color:#e5e7eb; border:1px solid #374151; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.85rem; cursor:pointer; min-width:70px;
+  }
+  #controls input[type="text"]{ cursor:text; min-width:160px; }
+  #controls button:hover{ background:#374151; }
+  #paramBar{ display:flex; align-items:center; gap:0.5rem; overflow-x:auto; max-width:100%; padding:0.25rem 0; }
+  .param{ display:inline-flex; align-items:center; gap:0.35rem; background:#0f172a; border:1px solid #334155; border-radius:8px; padding:0.35rem 0.5rem; white-space:nowrap; transition:border-color .15s ease, box-shadow .15s ease, background .15s ease; }
+  .param.locked{ border-color:#475569; background:#0b1327; }
+  .param.justToggled{ box-shadow:0 0 0 2px #60a5fa inset; }
+  .param label{ font-size:0.75rem; color:#9ca3af; }
+  .param input[type="range"]{ width:140px; }
+  .param input[type="number"]{ width:80px; background:#111827; border:1px solid #374151; color:#e5e7eb; font-size:0.8rem; }
+  .lockBtn{ width:18px; height:18px; min-width:18px; padding:0; display:inline-flex; align-items:center; justify-content:center; font-size:11px; line-height:1; border-radius:5px; background:#111827; border:1px solid #374151; color:#e5e7eb; }
+  .lockBtn:hover{ background:#1f2433; }
+  .lockTag{ display:none; font-size:10px; padding:1px 6px; border-radius:999px; border:1px solid #3b475c; background:#0f172a; color:#9ca3af; margin-left:2px; }
+  .param.locked .lockTag{ display:inline-block; }
+
+  #settingsPanel{ position:fixed; top:var(--controls-h); right:0; width:460px; max-height:calc(100vh - var(--controls-h)); overflow-y:auto; background:#1f2937; border-left:1px solid #374151; padding:0.75rem; transform:translateX(100%); transition:transform .25s ease-in-out; z-index:15; }
+  #settingsPanel.open{ transform:translateX(0); }
+  #settingsPanel h2{ margin:0 0 0.5rem 0; font-size:1rem; color:#60a5fa; }
+  .section{ margin-bottom:1rem; }
+  .section label{ display:block; margin-bottom:0.25rem; font-size:0.8rem; color:#9ca3af; }
+  .section textarea{ width:100%; min-height:120px; background:#111827; color:#e5e7eb; border:1px solid #374151; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size:0.8rem; }
+  .inline { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; }
+  .inline input[type="number"]{ width:90px; background:#111827; border:1px solid #374151; color:#e5e7eb; padding:0.15rem 0.4rem; }
+  .hint{ font-size:0.75rem; color:#9ca3af; margin-top:0.25rem; }
+  .bulk{ margin:0.25rem 0 0.5rem; display:flex; gap:0.25rem; flex-wrap:wrap; }
+  .bulk button{ padding:0.15rem 0.5rem; font-size:0.75rem; }
+
+  #chartContainer{ position:absolute; top:var(--controls-h); bottom:0; left:0; right:0; overflow:hidden; }
+  #chartCanvas{ width:100%; height:100%; display:block; }
+  #message{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#9ca3af; font-size:1rem; text-align:center; white-space:pre-wrap; pointer-events:none; }
+  #legend{ position:fixed; bottom:0.5rem; left:0.5rem; background:rgba(15,23,42,0.9); padding:0.5rem; border-radius:6px; font-size:0.75rem; max-width:44%; max-height:38vh; overflow-y:auto; border:1px solid #334155; z-index:16; }
+
+  /* 自動化測試窗（可折疊，放右下） */
+  #testPanel{ position:fixed; bottom:0.5rem; right:0.5rem; z-index:25; background:rgba(17,24,39,0.92); border:1px solid #334155; border-radius:6px; padding:0.25rem 0.5rem; font-size:0.8rem; max-width:40vw; color:#e5e7eb; }
+  #testPanel summary{ cursor:pointer; outline:none; list-style:none; display:flex; align-items:center; gap:0.5rem; }
+  #testPanel summary::-webkit-details-marker{ display:none; }
+  #testBody{ padding:0.25rem 0.25rem 0.5rem; }
+  #testPanel .ok{ color:#10b981; } #testPanel .fail{ color:#ef4444; }
+
+  #tuneStatus{ position:fixed; bottom:3.2rem; right:0.6rem; z-index:26; background:rgba(17,24,39,0.92); border:1px solid #334155; border-radius:999px; padding:0.2rem 0.6rem; font-size:0.78rem; color:#e5e7eb; display:none; align-items:center; gap:0.5rem; }
+  #tuneStatus .dot{ width:8px; height:8px; border-radius:50%; background:#60a5fa; display:inline-block; }
+
+  /* 游標檢視器 tooltip */
+  #hoverTip{ position:fixed; z-index:30; display:none; pointer-events:none; background:rgba(17,24,39,0.98); border:1px solid #334155; border-radius:6px; padding:6px 8px; font-size:12.5px; color:#e5e7eb; box-shadow:0 4px 12px rgba(0,0,0,0.35); white-space:nowrap; }
+
+  /* 方程式獨立可折疊面板（字體較大） */
+  #equationDock{ position:fixed; top:calc(var(--controls-h) + 6px); left:0.5rem; z-index:18; background:rgba(17,24,39,0.96); border:1px solid #334155; border-radius:8px; }
+  #equationDetails{ width:520px; max-width:calc(100vw - 1rem); }
+  #equationDetails summary{ cursor:pointer; list-style:none; padding:8px 10px; border-bottom:1px solid #334155; font-size:0.95rem; display:flex; align-items:center; gap:0.5rem; }
+  #equationDetails summary::-webkit-details-marker{ display:none; }
+  #equationBoxBody{ padding:8px 10px 10px; }
+  #equationInput{ width:100%; min-height:180px; background:#0f172a; color:#e5e7eb; border:1px solid #334155; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size:1rem; line-height:1.5; }
+  #equationApplyRow{ margin-top:8px; display:flex; gap:8px; align-items:center; }
+  #equationApplyRow button{ background:#1f2937; color:#e5e7eb; border:1px solid #374151; padding:0.35rem 0.65rem; border-radius:6px; font-size:0.9rem; cursor:pointer; }
+  #equationApplyRow button:hover{ background:#374151; }
+  #equationHint{ font-size:0.78rem; color:#94a3b8; margin-top:4px; }
+
+  /* 參數匯出 Dock（收合，不遮圖） */
+  #exportDock{ position:fixed; top:calc(var(--controls-h) + 6px); left:calc(0.5rem + 540px); z-index:17; background:rgba(17,24,39,0.96); border:1px solid #334155; border-radius:8px; }
+  #exportDetails{ width:420px; max-width:calc(100vw - 1rem); }
+  #exportDetails summary{ cursor:pointer; list-style:none; padding:8px 10px; border-bottom:1px solid #334155; font-size:0.95rem; display:flex; align-items:center; gap:0.5rem; }
+  #exportDetails summary::-webkit-details-marker{ display:none; }
+  #exportBoxBody{ padding:8px 10px 10px; }
+  #exportText{ width:100%; min-height:140px; background:#0f172a; color:#e5e7eb; border:1px solid #334155; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size:0.95rem; line-height:1.45; }
+
+  /* 控制列內的小標籤 */
+  #paramFilterEcho{ font-size:0.78rem; color:#9ca3af; padding:0 0.25rem; border-left:1px dashed #334155; margin-left:0.25rem; }
+</style>
+</head>
+<body>
+  <div id="controls">
+    <h1>CSV×方程對齊（強化調參 + SWIS）</h1>
+    <label>CSV<input type="file" id="csvFile" accept=".csv"/></label>
+    <label>TXT<input type="file" id="txtFile" accept=".txt"/></label>
+    <button id="exampleB" title="載入範例 B">示例 B</button>
+    <label>X 軸<select id="xSelect"></select></label>
+    <label><input type="checkbox" id="logX">X 因次對數</label>
+    <label><input type="checkbox" id="logY">Y 因次對數</label>
+
+    <!-- 參數搜尋（C 選配） + 鎖定操作移到上方 -->
+    <label>搜尋參數<input type="text" id="paramSearch" placeholder="例如: gain 或 bias"></label>
+    <!-- 移除預設 disabled，搜尋為空也可操作（等於套用到全部參數） -->
+    <button id="lockFilteredBtn" title="鎖定目前搜尋範圍（搜尋為空則鎖定全部）">鎖定篩選</button>
+    <button id="unlockFilteredBtn" title="解除鎖定目前搜尋範圍（搜尋為空則解除全部）">解除鎖定篩選</button>
+    <span id="paramFilterEcho">篩選：全部</span>
+
+    <button id="resetParams">重設參數</button>
+    <button id="autoTuneBtn" title="一鍵自動調參（依設定）">自動調參</button>
+    <button id="linWarmBtn" title="線性初解（若可自動判定近似線性）">線性初解</button>
+    <button id="toggleSettings">設定</button>
+    <div id="paramBar"></div>
+  </div>
+
+  <!-- 方程式編輯功能框（預設關閉） -->
+  <div id="equationDock">
+    <details id="equationDetails">
+      <summary>📐 方程式編輯（必含 <code>eq = ...</code>）</summary>
+      <div id="equationBoxBody">
+        <textarea id="equationInput"></textarea>
+        <div id="equationApplyRow">
+          <button id="applyEquation">套用方程</button>
+          <span id="equationHint">支援：<code>#</code> 註解行、<code>^</code> 指數自動轉為 <code>**</code>；編譯前做括號平衡檢查。</span>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <!-- 參數複製/匯出 Dock（預設收合，不遮繪圖） -->
+  <div id="exportDock">
+    <details id="exportDetails">
+      <summary>📦 參數複製 / 匯出（含自動調參結果）</summary>
+      <div id="exportBoxBody">
+        <div class="inline" style="margin-bottom:6px">
+          <label style="gap:0.25rem"><input type="radio" name="exportFmt" id="fmtTXT" checked>[PARAMS] 區塊</label>
+          <label style="gap:0.25rem"><input type="radio" name="exportFmt" id="fmtLines">key=value 每行</label>
+          <label style="gap:0.25rem"><input type="radio" name="exportFmt" id="fmtJSON">JSON</label>
+        </div>
+        <textarea id="exportText" readonly></textarea>
+        <div class="inline" style="margin-top:8px">
+          <button id="copyExport">複製到剪貼簿</button>
+          <button id="refreshExport">更新內容</button>
+        </div>
+        <div class="hint">內容會在參數變動或自動調參完成後自動更新。</div>
+      </div>
+    </details>
+  </div>
+
+  <div id="settingsPanel">
+    <h2>設定</h2>
+
+    <div id="metricSection" class="section">
+      <label>差異計算</label>
+      <div class="inline">
+        <label style="gap:0.2rem"><input type="radio" name="metric" id="metricRel" checked>相對（|Δ| / |y|）</label>
+        <label style="gap:0.2rem"><input type="radio" name="metric" id="metricAbs">絕對（|Δ|）</label>
+      </div>
+    </div>
+
+    <div id="thresholdSectionRel" class="section">
+      <label>相對誤差門檻（%）</label>
+      <div class="inline">
+        <span>OK ≤</span>
+        <input type="number" id="okPct" min="0" step="0.01" value="1">
+        <span>%　　WARN ≤</span>
+        <input type="number" id="warnPct" min="0" step="0.01" value="2">
+        <span>%</span>
+        <button id="resetThresholds">預設(1 / 2 %)</button>
+      </div>
+      <div class="hint">WARN 會自動不小於 OK；兩者調整後立即生效。</div>
+    </div>
+
+    <div id="thresholdSectionAbs" class="section" style="display:none">
+      <label>絕對誤差門檻（數值）</label>
+      <div class="inline">
+        <span>OK ≤</span>
+        <input type="number" id="okAbs" step="0.0001" value="0.1">
+        <span>　　WARN ≤</span>
+        <input type="number" id="warnAbs" step="0.0001" value="0.2">
+        <button id="resetAbsThresholds">預設(0.1 / 0.2)</button>
+      </div>
+      <div class="hint">適合 y 值量級一致、或需以固定絕對差界定品質之情境。</div>
+    </div>
+
+    <div id="samplingSection" class="section">
+      <label><input type="checkbox" id="realSample">曲線真實取樣（較慢/較準；已改為 SWIS）</label>
+      <div class="hint">關閉＝只在資料點計算函數值，曲線使用線性內插（較快）。開啟＝每段兩個資料點之間對非 X 的數值特徵做線性插值，再真實評估（SWIS），曲線必經過所有函數點。</div>
+    </div>
+
+    <div id="autoTuneSection" class="section">
+      <label>自動調參（退火 × 多起點 × SPSA × 局部精煉）</label>
+      <div class="inline" style="gap:0.75rem">
+        <span>目標：</span>
+        <label style="gap:0.2rem"><input type="radio" name="tgt" id="tgtOk" checked>OK</label>
+        <label style="gap:0.2rem"><input type="radio" name="tgt" id="tgtWarn">WARN</label>
+        <span>退火階段數：</span>
+        <input type="number" id="annealSteps" min="1" step="1" value="2" style="width:70px">
+        <span>最壞比例：</span>
+        <input type="number" id="worstPct" min="0" max="50" step="1" value="10" style="width:70px"><span>%</span>
+      </div>
+      <div class="inline" style="gap:0.75rem; margin-top:0.3rem">
+        <span>SPSA 步數：</span><input type="number" id="spsaSteps" min="0" step="10" value="100" style="width:80px">
+        <span>a0：</span><input type="number" id="spsaA" step="0.001" value="0.1" style="width:80px">
+        <span>c0：</span><input type="number" id="spsaC" step="0.001" value="0.05" style="width:80px">
+      </div>
+      <div class="inline" style="gap:0.75rem; margin-top:0.3rem">
+        <span>局部精煉：</span>
+        <select id="refineType" style="min-width:160px">
+          <option value="nelder">Nelder–Mead</option>
+          <option value="powell">Powell（座標近似）</option>
+          <option value="none">無</option>
+        
+          <option value="lm">Levenberg–Marquardt（LSQ）</option>
+          <option value="trf">Trust-Region（LSQ，含邊界）</option>
+        </select>
+        <span>時間上限(ms)：</span>
+        <input type="number" id="timeBudget" min="100" step="100" value="800" style="width:100px">
+      </div>
+<div class="inline" style="gap:0.75rem; margin-top:0.3rem">
+  <span>loss：</span>
+  <select id="lossSel" style="min-width:140px">
+    <option value="soft_l1" selected>soft_l1</option>
+    <option value="huber">huber</option>
+    <option value="cauchy">cauchy</option>
+    <option value="arctan">arctan</option>
+    <option value="linear">linear</option>
+  </select>
+
+  <span>全域法：</span>
+  <select id="globalSel" style="min-width:140px">
+    <option value="none" selected>none</option>
+    <option value="cmaes">CMA-ES</option>
+  </select>
+</div>
+
+<div class="inline" style="gap:0.75rem; margin-top:0.3rem">
+  <span>CMA 代數：</span><input type="number" id="cmaGen" min="1" step="1" value="12" style="width:80px">
+  <span>族群：</span><input type="number" id="cmaPop" min="0" step="1" value="0" style="width:80px" title="0=自動 4+3*ln(n)">
+  <span>σ0：</span><input type="number" id="cmaSigma0" min="1e-9" step="0.001" value="0.3" style="width:90px">
+</div>
+
+      <div class="inline" style="margin-top:0.4rem; gap:0.75rem">
+        <label style="gap:0.2rem"><input type="checkbox" id="onlyFiltered" checked>只針對目前篩選的資料列</label>
+        <span>隨機種子：</span><input type="number" id="seedInput" step="1" value="0" style="width:100px">
+        <span>樣本上限：</span><input type="number" id="sampleCap" step="1" value="1024" style="width:100px">
+      </div>
+      <div class="inline" style="margin-top:0.4rem; gap:0.75rem">
+        <span>多起點數：</span><input type="number" id="seedCount" min="1" step="1" value="12" style="width:80px">
+      </div>
+      <div class="inline" style="margin-top:0.4rem; gap:0.5rem">
+        <button id="tuneStart">開始</button>
+        <button id="tuneCancel">取消</button>
+      </div>
+      <div class="hint">使用上方控制列的「搜尋參數」篩選出想調的參數，再用「鎖定篩選／解除鎖定篩選」。自動調參只會調整目前**搜尋框篩到**且**未鎖定**的參數；搜尋為空＝全部參數。</div>
+    </div>
+
+    <div id="filterSection" class="section"></div>
+  </div>
+
+  <div id="chartContainer">
+    <canvas id="chartCanvas"></canvas>
+    <div id="message"></div>
+    <div id="legend"></div>
+  </div>
+
+  <div id="tuneStatus"><span class="dot"></span><span id="tuneText">自動調參中…</span></div>
+
+  <div id="testPanel" style="display:none;">
+    <details id="testDetails">
+      <summary><span>自動化測試</span><span class="badge" id="testSummaryBadge">執行中…</span></summary>
+      <div id="testBody"></div>
+    </details>
+  </div>
+
+  <!-- 游標檢視器 Tooltip -->
+  <div id="hoverTip"></div>
+
+<script>
+/* ==== 內建示例（保留 B；A 僅供測試） ==== */
+const exampleAEq =
+`[PARAMS]
+a = 5
+b = 2
+c = -7
+
+[EQUATION]
+aa = inv(clamp(v1, 0.1, 0.2)) - inv(0.1)
+bb = inv(clamp(v1, 0.3, 0.4)) - inv(0.3)
+eq = c + b*bb + a*aa`;
+
+const exampleBEq =
+`[PARAMS]
+a = 1
+b = 2
+c = 3
+
+[EQUATION]
+eq = c + b*v2 + a*v1`;
+
+const exampleBData =
+`v1,v2,v3,v4,value
+1,1,1,10,6
+2,1,1,10,7`;
+
+/* ==== 工具 ==== */
+function sanitizeName(name){ return name.trim().replace(/[^a-zA-Z0-9_]/g,'_').replace(/^([0-9])/, '_$1'); }
+function clamp(x, lo, hi){ return Math.max(lo, Math.min(hi, x)); }
+function hslToHex(h,s,l){ s/=100; l/=100; var c=(1-Math.abs(2*l-1))*s; var x=c*(1-Math.abs((h/60)%2-1)); var m=l-c/2; var r=0,g=0,b=0;
+  if(0<=h&&h<60){r=c;g=x;b=0;} else if(60<=h&&h<120){r=x;g=c;b=0;}
+  else if(120<=h&&h<180){r=0;g=c;b=x;} else if(180<=h&&h<240){r=0;g=x;b=c;}
+  else if(240<=h&&h<300){r=x;g=0;b=c;} else {r=c;g=0;b=x;}
+  r=Math.round((r+m)*255); g=Math.round((g+m)*255); b=Math.round((b+m)*255);
+  return '#'+r.toString(16).padStart(2,'0')+g.toString(16,'0')+b.toString(16,'0');
+}
+function hashString(str){ var h=0x811c9dc5>>>0; for(var i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=(h+((h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24)))>>>0; } return h>>>0; }
+function colorForKey(key){ var h=hashString(key)%360; return hslToHex(h,58,62); }
+function shapeForKey(key){ var shapes=['circle','square','triangle','diamond']; return shapes[hashString(key)%shapes.length]; }
+function fmtPct(p){ var v=p*100; return (Math.abs(v - Math.round(v))<1e-9? String(Math.round(v)) : v.toFixed(2))+'%'; }
+function fmtNum(val){
+  if(!isFinite(val)) return 'NaN';
+  var a=Math.abs(val);
+  if(a>=1e7) return val.toExponential(2);
+  if(a>=1e5) return Math.round(val).toString();
+  if(a>=1) return val.toFixed(4).replace(/0+$/,'').replace(/\.$/,'');
+  if(a>=1e-3) return val.toFixed(6).replace(/0+$/,'').replace(/\.$/,'');
+  return val.toExponential(2);
+}
+/* 新：參數匯出格式化（修正 e-10 被誤砍） */
+function numToTight(v){
+  if(!isFinite(v)) return 'NaN';
+  var s = Number(v).toPrecision(12);
+  var m = s.match(/^([+\-]?\d+(?:\.\d+)?)(e[+\-]?\d+)?$/i);
+  if(!m) return String(v);
+  var mant = m[1];
+  var exp  = m[2] ? ('e' + String(parseInt(m[2].slice(1), 10))) : '';
+  if(mant.indexOf('.') >= 0){
+    mant = mant
+      .replace(/(\.\d*?[1-9])0+$/,'$1')
+      .replace(/\.0+$/,'')
+      .replace(/\.$/,'');
+  }
+  if(mant === '-0') mant = '0';
+  return mant + exp;
+}
+
+/* ==== 全域狀態 ==== */
+var csvRows=[], colNames=[], valueKey='value';
+var params={}, initParams={}, paramBounds={}, paramLocks={};
+var assignments=[], eqAssign=null;
+var filterSelections={}, xVar=null;
+var combosCache=null, eqYCache=null;
+
+var needsCompile=true, compiledReady=false, pendingEvalIdx=null;
+
+var controls=document.getElementById('controls');
+var paramBar=document.getElementById('paramBar');
+var xSelect=document.getElementById('xSelect');
+var filterSection=document.getElementById('filterSection');
+var equationInput=document.getElementById('equationInput');
+var settingsPanel=document.getElementById('settingsPanel');
+var resetParamsBtn=document.getElementById('resetParams');
+var messageDiv=document.getElementById('message');
+var legendDiv=document.getElementById('legend');
+var testPanel=document.getElementById('testPanel');
+var testDetails=document.getElementById('testDetails');
+var testBody=document.getElementById('testBody');
+var testBadge=document.getElementById('testSummaryBadge');
+var chartCanvas=document.getElementById('chartCanvas');
+var ctx=chartCanvas.getContext('2d');
+var logXChk=document.getElementById('logX'), logYChk=document.getElementById('logY');
+var realSampleChk=document.getElementById('realSample');
+var hoverTip=document.getElementById('hoverTip');
+
+/* 參數搜尋（C 選配） + 上方鎖定鍵 */
+var paramSearchInput=document.getElementById('paramSearch');
+var paramFilterQuery='';
+var paramFilterEcho=document.getElementById('paramFilterEcho');
+var lockFilteredBtn=document.getElementById('lockFilteredBtn');
+var unlockFilteredBtn=document.getElementById('unlockFilteredBtn');
+
+/* 參數複製 Dock 元件 */
+var exportDetails=document.getElementById('exportDetails');
+var exportText=document.getElementById('exportText');
+var fmtTXT=document.getElementById('fmtTXT');
+var fmtLines=document.getElementById('fmtLines');
+var fmtJSON=document.getElementById('fmtJSON');
+var copyExportBtn=document.getElementById('copyExport');
+var refreshExportBtn=document.getElementById('refreshExport');
+
+/* 游標狀態 */
+var lastAxes=null;
+var lastHover=null;
+
+/* 差異模式與門檻 */
+var DIFF_MODE='rel';
+var THRESH_OK_REL=0.01, THRESH_WARN_REL=0.02;
+var THRESH_OK_ABS=0.1, THRESH_WARN_ABS=0.2;
+var okPctInput=document.getElementById('okPct');
+var warnPctInput=document.getElementById('warnPct');
+var resetThresholdsBtn=document.getElementById('resetThresholds');
+var okAbsInput=document.getElementById('okAbs');
+var warnAbsInput=document.getElementById('warnAbs');
+var resetAbsBtn=document.getElementById('resetAbsThresholds');
+var metricRel=document.getElementById('metricRel');
+var metricAbs=document.getElementById('metricAbs');
+
+/* 自動調參 UI */
+var autoTuneBtn=document.getElementById('autoTuneBtn');
+var linWarmBtn=document.getElementById('linWarmBtn');
+var tuneStartBtn=document.getElementById('tuneStart');
+var tuneCancelBtn=document.getElementById('tuneCancel');
+var tgtOk=document.getElementById('tgtOk');
+var tgtWarn=document.getElementById('tgtWarn');
+var annealStepsInput=document.getElementById('annealSteps');
+var worstPctInput=document.getElementById('worstPct');
+var spsaStepsInput=document.getElementById('spsaSteps');
+var spsaAInput=document.getElementById('spsaA');
+var spsaCInput=document.getElementById('spsaC');
+var refineTypeSel=document.getElementById('refineType');
+var lossSel = document.getElementById('lossSel');
+var globalSel = document.getElementById('globalSel');
+var cmaGenInput = document.getElementById('cmaGen');
+var cmaPopInput = document.getElementById('cmaPop');
+var cmaSigma0Input = document.getElementById('cmaSigma0');
+
+var timeBudgetInput=document.getElementById('timeBudget');
+var onlyFilteredChk=document.getElementById('onlyFiltered');
+var seedInput=document.getElementById('seedInput');
+var sampleCapInput=document.getElementById('sampleCap');
+var seedCountInput=document.getElementById('seedCount');
+var tuneStatus=document.getElementById('tuneStatus'), tuneText=document.getElementById('tuneText');
+var tuning=false;
+
+/* 控制列高度變數 + 面板開關 */
+function updateControlsHeightVar(){ var h=controls.getBoundingClientRect().height; document.documentElement.style.setProperty('--controls-h', String(Math.round(h))+'px'); }
+new ResizeObserver(updateControlsHeightVar).observe(controls);
+document.getElementById('toggleSettings').addEventListener('click', function(){ settingsPanel.classList.toggle('open'); });
+
+/* DPR 畫布縮放 */
+function resizeCanvas(){
+  var ctn=document.getElementById('chartContainer');
+  var w=ctn.clientWidth, h=ctn.clientHeight, dpr=window.devicePixelRatio||1;
+  chartCanvas.style.width=w+'px'; chartCanvas.style.height=h+'px';
+  chartCanvas.width=Math.max(1, Math.floor(w*dpr));
+  chartCanvas.height=Math.max(1, Math.floor(h*dpr));
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  scheduleUpdate('resize');
+}
+window.addEventListener('resize', resizeCanvas);
+
+/* ==== 解析 ==== */
+function parseCSV(content){
+  var lines=content.replace(/\r/g,'').trim().split(/\n+/);
+  if(!lines.length) return [];
+  var header=lines[0]; if(header.charCodeAt(0)===0xfeff) header=header.slice(1);
+  var headers=header.split(',').map(function(h){return h.trim();});
+  var sanitized=headers.map(sanitizeName);
+  var data=[];
+  for(var i=1;i<lines.length;i++){
+    var line=lines[i].trim(); if(!line) continue;
+    var parts=line.split(','); if(parts.length<sanitized.length) continue;
+    var row={};
+    for(var j=0;j<sanitized.length;j++){
+      var val=parts[j].trim(); var num=Number(val);
+      row[sanitized[j]]=(val===''||isNaN(num))? val : num;
+    }
+    row.__idx=i-1;
+    data.push(row);
+  }
+  colNames=sanitized.slice(0,4); valueKey=sanitized[4]||'value';
+  return data;
+}
+function parseTXT(content){
+  var lines=content.replace(/\r/g,'').split(/\n+/);
+  params={}; assignments=[]; eqAssign=null; initParams={}; var current=null;
+  for(var i=0;i<lines.length;i++){
+    var raw=lines[i]; var line=raw.trim(); if(!line||line.charAt(0)==='#') continue;
+    var lower=line.toLowerCase();
+    if(lower.indexOf('[params]')===0){ current='params'; continue; }
+    if(lower.indexOf('[equation]')===0){ current='eq'; continue; }
+    if(current==='params'){
+      var m=line.split('='); if(m.length>=2){
+        var key=sanitizeName(m[0].trim()); var val=parseFloat(m[1].replace(/\s+/g,''));
+        if(!Number.isNaN(val)){ params[key]=val; initParams[key]=val; if(!(key in paramLocks)) paramLocks[key]=false; }
+      }
+    }else if(current==='eq'){
+      var n=line.indexOf('='); if(n>=0){
+        var k=sanitizeName(line.slice(0,n).trim()); var expr=line.slice(n+1).trim();
+        if(k==='eq') eqAssign={ "var":k, "expr":expr }; else assignments.push({ "var":k, "expr":expr });
+      }
+    }
+  }
+}
+
+/* ==== 參數搜尋（C 選配） ==== */
+function matchesParamFilter(name){
+  if(!paramFilterQuery) return true;
+  return name.toLowerCase().indexOf(paramFilterQuery.toLowerCase())>=0;
+}
+function updateParamFilterEcho(){
+  var q = paramFilterQuery ? paramFilterQuery : '全部';
+  paramFilterEcho.textContent = '篩選：' + q;
+  /* 不再自動停用鎖定按鈕；搜尋為空＝全部參數 */
+}
+
+/* ==== UI 建構 ==== */
+function buildParamControls(){
+  paramBar.innerHTML=''; paramBounds={};
+  var keys=Object.keys(params).filter(matchesParamFilter);
+  function schedule(){ scheduleUpdate('param'); updateExportText(); }
+
+  if(!keys.length){
+    var empty=document.createElement('div');
+    empty.textContent='（無匹配參數）';
+    empty.style.color='#94a3b8';
+    paramBar.appendChild(empty);
+    return;
+  }
+
+  for(var i=0;i<keys.length;i++){
+    var key=keys[i], init=params[key];
+    var range=Math.max(Math.abs(init)*5, 10), min=init-range, max=init+range;
+    var wrap=document.createElement('div'); wrap.className='param' + (paramLocks[key]?' locked':''); wrap.dataset.key=key;
+
+    var lockBtn=document.createElement('button');
+    lockBtn.className='lockBtn';
+    lockBtn.title=paramLocks[key]?'已鎖定：自動調參不會改動':'未鎖定：自動調參會調整';
+    lockBtn.setAttribute('aria-pressed', paramLocks[key]?'true':'false');
+    lockBtn.textContent = paramLocks[key] ? '🔒' : '🔓';
+    var lockTag=document.createElement('span'); lockTag.className='lockTag'; lockTag.textContent='🔒 LOCK';
+
+    lockBtn.addEventListener('click', (function(k,wrap,btn){
+      return function(e){
+        e.preventDefault(); e.stopPropagation();
+        paramLocks[k]=!paramLocks[k];
+        btn.textContent=paramLocks[k]?'🔒':'🔓';
+        btn.setAttribute('aria-pressed', paramLocks[k]?'true':'false');
+        btn.title=paramLocks[k]?'已鎖定：自動調參不會改動':'未鎖定：自動調參會調整';
+        wrap.className='param' + (paramLocks[k]?' locked':'');
+        wrap.classList.add('justToggled'); setTimeout(function(){ wrap.classList.remove('justToggled'); }, 350);
+      };
+    })(key,wrap,lockBtn));
+
+    var label=document.createElement('label'); label.textContent=key;
+    var slider=document.createElement('input'); slider.type='range'; slider.min=min; slider.max=max; slider.step=(max-min)/100; slider.value=init;
+    var number=document.createElement('input'); number.type='number'; number.min=min; number.max=max; number.step=slider.step; number.value=init;
+    paramBounds[key]={min:min, max:max};
+
+    (function(key,slider,number){
+      function commit(val){
+        var num=parseFloat(val); if(!Number.isFinite(num)) return;
+        params[key]=num; slider.value=num; number.value=num;
+        schedule(); // eval，不重編；並更新匯出
+      }
+      slider.addEventListener('input', function(){ commit(slider.value); });
+      number.addEventListener('change', function(){ commit(number.value); });
+    })(key,slider,number);
+
+    wrap.appendChild(lockBtn);
+    wrap.appendChild(label);
+    wrap.appendChild(lockTag);
+    wrap.appendChild(slider);
+    wrap.appendChild(number);
+    paramBar.appendChild(wrap);
+  }
+
+  updateExportText();
+}
+
+/* 門檻顯示/套用 */
+function updateThresholdView(){
+  var relSec=document.getElementById('thresholdSectionRel');
+  var absSec=document.getElementById('thresholdSectionAbs');
+  if(DIFF_MODE==='rel'){ relSec.style.display='block'; absSec.style.display='none'; }
+  else { relSec.style.display='none'; absSec.style.display='block'; }
+}
+function syncThresholdInputs(){
+  okPctInput.value=(THRESH_OK_REL*100).toString();
+  warnPctInput.value=(THRESH_WARN_REL*100).toString();
+  okAbsInput.value=THRESH_OK_ABS.toString();
+  warnAbsInput.value=THRESH_WARN_ABS.toString();
+  updateThresholdView();
+}
+function applyRelThresholdFromUI(){
+  var okp=parseFloat(okPctInput.value), warnp=parseFloat(warnPctInput.value);
+  if(!Number.isFinite(okp)||okp<0) okp=0;
+  if(!Number.isFinite(warnp)||warnp<0) warnp=0;
+  if(warnp<okp) warnp=okp;
+  THRESH_OK_REL=okp/100; THRESH_WARN_REL=warnp/100; syncThresholdInputs(); scheduleUpdate('threshold');
+}
+function applyAbsThresholdFromUI(){
+  var oka=parseFloat(okAbsInput.value), warna=parseFloat(warnAbsInput.value);
+  if(!Number.isFinite(oka)||oka<0) oka=0;
+  if(!Number.isFinite(warna)||warna<0) warna=0;
+  if(warna<oka) warna=oka;
+  THRESH_OK_ABS=oka; THRESH_WARN_ABS=warna; syncThresholdInputs(); scheduleUpdate('threshold');
+}
+okPctInput.addEventListener('change', applyRelThresholdFromUI);
+warnPctInput.addEventListener('change', applyRelThresholdFromUI);
+resetThresholdsBtn.addEventListener('click', function(){ THRESH_OK_REL=0.01; THRESH_WARN_REL=0.02; syncThresholdInputs(); scheduleUpdate('threshold'); });
+okAbsInput.addEventListener('change', applyAbsThresholdFromUI);
+warnAbsInput.addEventListener('change', applyAbsThresholdFromUI);
+resetAbsBtn.addEventListener('click', function(){ THRESH_OK_ABS=0.1; THRESH_WARN_ABS=0.2; syncThresholdInputs(); scheduleUpdate('threshold'); });
+metricRel.addEventListener('change', function(){ if(metricRel.checked){ DIFF_MODE='rel'; scheduleUpdate('thresholdMode'); } syncThresholdInputs(); });
+metricAbs.addEventListener('change', function(){ if(metricAbs.checked){ DIFF_MODE='abs'; scheduleUpdate('thresholdMode'); } syncThresholdInputs(); });
+
+/* 篩選區（非 X 的前兩個） */
+function buildFilters(){
+  filterSection.innerHTML='';
+  if(!csvRows.length||!xVar) return;
+  var vars=colNames.filter(function(v){return v!==xVar;}); // 非 X
+  var fVars=vars.slice(0,2);
+  filterSelections={}; for(var i=0;i<fVars.length;i++){ filterSelections[fVars[i]]=new Set(); }
+
+  for(var fi=0; fi<fVars.length; fi++){
+    (function(v){
+      var title=document.createElement('div'); title.textContent='篩選 '+v; title.style.margin='0 0 0.25rem 0'; filterSection.appendChild(title);
+      var bulk=document.createElement('div'); bulk.className='bulk';
+      var bAll=document.createElement('button'); bAll.textContent='全選';
+      var bNone=document.createElement('button'); bNone.textContent='全不選';
+      bulk.appendChild(bAll); bulk.appendChild(bNone); filterSection.appendChild(bulk);
+      var group=document.createElement('div'); group.style.display='flex'; group.style.flexWrap='wrap'; group.style.gap='0.25rem';
+      var uniqueVals=[], seen={};
+      for(var i=0;i<csvRows.length;i++){ var val=csvRows[i][v]; if(!seen[String(val)]){ seen[String(val)]=1; uniqueVals.push(val); } }
+      uniqueVals.sort(function(a,b){
+        var na=!isNaN(a), nb=!isNaN(b);
+        return (na&&nb)? (parseFloat(a)-parseFloat(b)) : String(a).localeCompare(String(b));
+      });
+      var set=new Set(uniqueVals); filterSelections[v]=set;
+
+      function renderChecks(){
+        group.innerHTML='';
+        for(var j=0;j<uniqueVals.length;j++){
+          (function(val){
+            var lb=document.createElement('label'); lb.style.display='inline-flex'; lb.style.alignItems='center'; lb.style.gap='0.25rem'; lb.style.fontSize='0.8rem';
+            var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=set.has(val);
+            cb.addEventListener('change', function(){ if(cb.checked) set.add(val); else set.delete(val); scheduleUpdate('filter'); });
+            lb.appendChild(cb); lb.appendChild(document.createTextNode(String(val))); group.appendChild(lb);
+          })(uniqueVals[j]);
+        }
+      }
+      bAll.addEventListener('click', function(){ for(var k=0;k<uniqueVals.length;k++) set.add(uniqueVals[k]); renderChecks(); scheduleUpdate('filter'); });
+      bNone.addEventListener('click', function(){ set.clear(); renderChecks(); scheduleUpdate('filter'); });
+      renderChecks(); filterSection.appendChild(group);
+    })(fVars[fi]);
+  }
+}
+function populateXSelect(){
+  xSelect.innerHTML='';
+  for(var i=0;i<colNames.length;i++){ var name=colNames[i]; var op=document.createElement('option'); op.value=name; op.textContent=name; xSelect.appendChild(op); }
+  if(colNames.length){ xVar=colNames[0]; xSelect.value=xVar; }
+  xSelect.onchange=function(){ xVar=xSelect.value; combosCache=null; buildFilters(); scheduleUpdate('xchange'); };
+}
+
+/* ==== 取樣與繪圖 ==== */
+function buildCombosStructure(){
+  var combos={};
+  var vars=colNames.filter(function(v){return v!==xVar;}); var fVars=vars.slice(0,2);
+  var selectedMap={}; for(var i=0;i<fVars.length;i++){ selectedMap[fVars[i]]=filterSelections[fVars[i]]? new Set(filterSelections[fVars[i]]) : null; }
+  for(var ri=0; ri<csvRows.length; ri++){
+    var row=csvRows[ri], pass=true;
+    for(var j=0;j<fVars.length;j++){ var fv=fVars[j], sel=selectedMap[fv]; if(sel){ if(sel.size===0){ pass=false; break; } if(!sel.has(row[fv])){ pass=false; break; } } }
+    if(!pass) continue;
+    var key=fVars.map(function(v){return row[v];}).join('|');
+    if(!combos[key]) combos[key]={ rows:[], points:[], lineX:[], lineY:[], color:colorForKey(key), shape:shapeForKey(key), label:'', baseIdx:-1, xData:null, idxData:null };
+    combos[key].rows.push(row);
+  }
+  for(var k in combos){
+    var combo=combos[k];
+    var values=k.split('|'); var fVars2=colNames.filter(function(v){return v!==xVar;}).slice(0,2);
+    combo.label=fVars2.map(function(v,i){return v+'='+values[i];}).join(' & ');
+    combo.points=combo.rows.map(function(r){ return { x:r[xVar], dataY:r[valueKey], eqY:NaN, diffCat:'na', shape:combo.shape, idx:r.__idx }; });
+    combo.points.sort(function(a,b){ return a.x-b.x; });
+    combo.baseIdx = combo.rows.length ? combo.rows[0].__idx : 0;
+
+    combo.xData = new Float64Array(combo.points.length);
+    combo.idxData = new Uint32Array(combo.points.length);
+    for (var ii=0; ii<combo.points.length; ii++){
+      combo.xData[ii]  = combo.points[ii].x;
+      combo.idxData[ii] = combo.points[ii].idx;
+    }
+
+    var firstX = (combo.points.length? combo.points[0].x : NaN);
+    var samples=Math.min(600, Math.max(60, Math.floor(chartCanvas.clientWidth/2)));
+    var dmin=Infinity,dmax=-Infinity,i;
+    for(i=0;i<combo.points.length;i++){ var xv=combo.points[i].x; if(Number.isFinite(xv)){ dmin=Math.min(dmin,xv); dmax=Math.max(dmax,xv);} }
+    if(!(dmin<dmax)){ dmin=(Number.isFinite(firstX)? firstX-0.5 : 0); dmax=(Number.isFinite(firstX)? firstX+0.5 : 1); }
+    var step=(dmax-dmin)/(samples-1); combo.lineX=new Array(samples);
+    for(i=0;i<samples;i++) combo.lineX[i]=dmin+step*i;
+    combo.lineY = combo.lineY && combo.lineY.length===samples ? combo.lineY : interpLineYFromEqPoints(combo.points, combo.lineX);
+  }
+  return combos;
+}
+function interpLineYFromEqPoints(points, xs){
+  var out=new Array(xs.length); if(points.length===0){ for(var i=0;i<xs.length;i++) out[i]=NaN; return out; }
+  if(points.length===1){ var val=points[0].eqY; for(var i=0;i<xs.length;i++) out[i]=val; return out; }
+  var xi=[], yi=[]; for(var k=0;k<points.length;k++){ var p=points[k]; if(Number.isFinite(p.x) && Number.isFinite(p.eqY)){ xi.push(p.x); yi.push(p.eqY); } }
+  if(xi.length===0){ for(var i=0;i<xs.length;i++) out[i]=NaN; return out; }
+  for(var i=0;i<xs.length;i++){
+    var x=xs[i]; if(x<=xi[0]){ out[i]=yi[0]; continue; } if(x>=xi[xi.length-1]){ out[i]=yi[yi.length-1]; continue; }
+    var lo=0, hi=xi.length-1; while(hi-lo>1){ var mid=(lo+hi)>>1; if(xi[mid]<=x) lo=mid; else hi=mid; }
+    var x0=xi[lo], x1=xi[hi], y0=yi[lo], y1=yi[hi]; var t=(x-x0)/(x1-x0); out[i]=y0*(1-t)+y1*t;
+  }
+  return out;
+}
+function quantile(arr, q){ if(!arr.length) return NaN; var a=arr.slice().sort(function(x,y){return x-y;});
+  var pos=(a.length-1)*q, lo=Math.floor(pos), hi=Math.ceil(pos); if(lo===hi) return a[lo]; var h=pos-lo; return a[lo]*(1-h)+a[hi]*h; }
+
+function tx(v, useLog){ if(!Number.isFinite(v)) return NaN; if(useLog){ if(v<=0) return NaN; return Math.log(v)/Math.LN10; } return v; }
+function ty(v, useLog){ if(!Number.isFinite(v)) return NaN; if(useLog){ if(v<=0) return NaN; return Math.log(v)/Math.LN10; } return v; }
+
+/* 繪圖（裁剪，函數點中空透明） */
+function drawChart(combos){
+  var w=chartCanvas.clientWidth, h=chartCanvas.clientHeight, margin=54;
+  var useLogX=!!logXChk.checked, useLogY=!!logYChk.checked;
+  ctx.clearRect(0,0,chartCanvas.width,chartCanvas.height);
+  if(!combos || Object.keys(combos).length===0){
+    messageDiv.style.display='block'; messageDiv.textContent='尚未載入資料或無符合篩選的資料列'; legendDiv.innerHTML=''; lastAxes=null; return;
+  }
+  messageDiv.style.display='none';
+
+  var xMinT=Infinity,xMaxT=-Infinity,yMinT=Infinity,yMaxT=-Infinity, key,i;
+  function accX(v){ var t=tx(v,useLogX); if(Number.isFinite(t)){ xMinT=Math.min(xMinT,t); xMaxT=Math.max(xMaxT,t);} }
+  function accY(v){ var t=ty(v,useLogY); if(Number.isFinite(t)){ yMinT=Math.min(yMinT,t); yMaxT=Math.max(yMaxT,t);} }
+  for(key in combos){
+    var c=combos[key];
+    for(i=0;i<c.points.length;i++){ var pt=c.points[i]; accX(pt.x); accY(pt.dataY); accY(pt.eqY); }
+  }
+  var allYt=[]; for(key in combos){ var cc=combos[key]; if(cc.lineY&&cc.lineY.length){ for(i=0;i<cc.lineY.length;i++){ var v=cc.lineY[i]; var t=ty(v,useLogY); if(Number.isFinite(t)) allYt.push(t); } } }
+  if(allYt.length){ var q5=quantile(allYt,0.05), q95=quantile(allYt,0.95), pad=(q95-q5)*0.12; var yLo=q5-pad, yHi=q95+pad; yMinT=Math.min(yMinT,yLo); yMaxT=Math.max(yMaxT,yHi); }
+  if(!(xMinT<xMaxT)){ xMinT-=0.5; xMaxT+=0.5; } if(!(yMinT<yMaxT)){ yMinT-=0.5; yMaxT+=0.5; }
+  var xPad=(xMaxT-xMinT)*0.08, yPad=(yMaxT-yMinT)*0.12; xMinT-=xPad; xMaxT+=xPad; yMinT-=yPad; yMaxT+=yPad;
+
+  function xScaleT(t){ return margin + (t-xMinT)/(xMaxT-xMinT)*(w-2*margin); }
+  function yScaleT(t){ return h - margin - (t-yMinT)/(yMaxT-yMinT)*(h-2*margin); }
+  function xScale(v){ return xScaleT(tx(v,useLogX)); }
+  function yScale(v){ return yScaleT(ty(v,useLogY)); }
+
+  lastAxes={useLogX:useLogX,useLogY:useLogY,xMinT:xMinT,xMaxT:xMaxT,yMinT:yMinT,yMaxT:yMaxT,margin:margin,w:w,h:h};
+
+  ctx.strokeStyle='#334155'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(margin, h-margin); ctx.lineTo(w-margin, h-margin); ctx.moveTo(margin, margin); ctx.lineTo(margin, h-margin); ctx.stroke();
+  ctx.fillStyle='#9ca3af'; ctx.font='12px system-ui, sans-serif';
+
+  if(!logXChk.checked){
+    for(i=0;i<=6;i++){ var t=xMinT + i*(xMaxT-xMinT)/6; var xp=xScaleT(t); var xv=t; var text=parseFloat(xv.toFixed(4));
+      ctx.beginPath(); ctx.moveTo(xp,h-margin); ctx.lineTo(xp,h-margin+4); ctx.stroke(); var mtxt=ctx.measureText(text); ctx.fillText(text, xp-mtxt.width/2, h-margin+16); }
+  }else{
+    var eMin=Math.floor(xMinT), eMax=Math.ceil(xMaxT);
+    for(var e=eMin; e<=eMax; e++){ var xp=xScaleT(e); ctx.beginPath(); ctx.moveTo(xp,h-margin); ctx.lineTo(xp,h-margin+4); ctx.stroke(); var label='10^'+e; var mtxt=ctx.measureText(label); ctx.fillText(label, xp-mtxt.width/2, h-margin+16); }
+  }
+  if(!logYChk.checked){
+    for(i=0;i<=6;i++){ var t2=yMinT + i*(yMaxT-yMinT)/6; var yp=yScaleT(t2); var yv=t2; var text2=parseFloat(yv.toFixed(4));
+      ctx.beginPath(); ctx.moveTo(margin-4, yp); ctx.lineTo(margin, yp); ctx.stroke(); var mtxt2=ctx.measureText(text2); ctx.fillText(text2, margin-mtxt2.width-6, yp+4); }
+  }else{
+    var fMin=Math.floor(yMinT), fMax=Math.ceil(yMaxT);
+    for(var f=fMin; f<=fMax; f++){ var yp=yScaleT(f); ctx.beginPath(); ctx.moveTo(margin-4, yp); ctx.lineTo(margin, yp); ctx.stroke(); var labelY='10^'+f; var mt=ctx.measureText(labelY); ctx.fillText(labelY, margin-mt.width-6, yp+4); }
+  }
+
+  ctx.save(); ctx.beginPath(); ctx.rect(margin, margin, w-2*margin, h-2*margin); ctx.clip();
+
+  for(key in combos){
+    var c=combos[key];
+    if(c.lineX && c.lineY && c.lineX.length===c.lineY.length){
+      ctx.save(); ctx.strokeStyle=c.color; ctx.lineWidth=2; ctx.beginPath(); var started=false;
+      for(i=0;i<c.lineX.length;i++){ var lx=xScale(c.lineX[i]), ly=yScale(c.lineY[i]); if(!Number.isFinite(lx)||!Number.isFinite(ly)) continue; if(!started){ ctx.moveTo(lx,ly); started=true; } else ctx.lineTo(lx,ly); }
+      ctx.stroke(); ctx.restore();
+    }
+  }
+
+  for(key in combos){
+    var c2=combos[key];
+    for(i=0;i<c2.points.length;i++){
+      var pt=c2.points[i]; var xp=xScale(pt.x), ypData=yScale(pt.dataY), ypEq=yScale(pt.eqY);
+      if(Number.isFinite(xp) && Number.isFinite(ypData) && Number.isFinite(ypEq)){
+        ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle=c2.color+'66'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(xp, ypData); ctx.lineTo(xp, ypEq); ctx.stroke(); ctx.restore();
+      }
+      if(Number.isFinite(xp) && Number.isFinite(ypEq)){
+        drawShape(ctx, c2.shape, xp, ypEq, 5, null, c2.color, 1.8);
+      }
+      if(Number.isFinite(xp) && Number.isFinite(ypData)){
+        var fill='#94a3b8';
+        if(Number.isFinite(pt.eqY) && Number.isFinite(pt.dataY)){
+          var d = Math.abs(pt.eqY-pt.dataY);
+          if(DIFF_MODE==='rel'){
+            var diff = d/(Math.abs(pt.dataY)+1e-12);
+            if(diff<=THRESH_OK_REL){ fill='#10b981'; pt.diffCat='ok'; }
+            else if(diff<=THRESH_WARN_REL){ fill='#f59e0b'; pt.diffCat='warn'; }
+            else { fill='#ef4444'; pt.diffCat='bad'; }
+          }else{
+            if(d<=THRESH_OK_ABS){ fill='#10b981'; pt.diffCat='ok'; }
+            else if(d<=THRESH_WARN_ABS){ fill='#f59e0b'; pt.diffCat='warn'; }
+            else { fill='#ef4444'; pt.diffCat='bad'; }
+          }
+        }
+        drawShape(ctx, c2.shape, xp, ypData, 5.5, fill, c2.color, 1.2);
+      }
+    }
+  }
+
+  if(lastHover && lastHover.px!=null && lastHover.py!=null){
+    var px=lastHover.px, py=lastHover.py;
+    ctx.save();
+    ctx.setLineDash([5,4]); ctx.lineWidth=1; ctx.strokeStyle=(lastHover.color||'#60a5fa')+'66';
+    ctx.beginPath(); ctx.moveTo(px, margin); ctx.lineTo(px, h-margin); ctx.moveTo(margin, py); ctx.lineTo(w-margin, py); ctx.stroke();
+    drawShape(ctx, 'circle', px, py, 5.5, null, lastHover.color||'#60a5fa', 2.0);
+    ctx.restore();
+  }
+
+  ctx.restore();
+
+  legendDiv.innerHTML='';
+  var row=document.createElement('div'); row.innerHTML='<strong>差異說明：</strong>'; legendDiv.appendChild(row);
+  if(DIFF_MODE==='rel'){
+    [
+      {label:'≤'+fmtPct(THRESH_OK_REL), color:'#10b981'},
+      {label:fmtPct(THRESH_OK_REL)+'–'+fmtPct(THRESH_WARN_REL), color:'#f59e0b'},
+      {label:'≥'+fmtPct(THRESH_WARN_REL), color:'#ef4444'},
+      {label:'NA', color:'#94a3b8'}
+    ].forEach(function(dc){
+      var r=document.createElement('div'); var sw=document.createElement('span'); sw.style.cssText='display:inline-block;width:12px;height:12px;background:'+dc.color+';border-radius:2px;margin-right:6px';
+      r.appendChild(sw); r.appendChild(document.createTextNode(dc.label)); legendDiv.appendChild(r);
+    });
+  }else{
+    [
+      {label:'≤ '+THRESH_OK_ABS, color:'#10b981'},
+      {label:THRESH_OK_ABS+' – '+THRESH_WARN_ABS, color:'#f59e0b'},
+      {label:'≥ '+THRESH_WARN_ABS, color:'#ef4444'},
+      {label:'NA', color:'#94a3b8'}
+    ].forEach(function(dc){
+      var r=document.createElement('div'); var sw=document.createElement('span'); sw.style.cssText='display:inline-block;width:12px;height:12px;background:'+dc.color+';border-radius:2px;margin-right:6px';
+      r.appendChild(sw); r.appendChild(document.createTextNode(dc.label)); legendDiv.appendChild(r);
+    });
+  }
+  var t=document.createElement('div'); t.innerHTML='<strong>條件線：</strong>'; legendDiv.appendChild(t);
+  for(key in combos){
+    var cc=combos[key]; var rr=document.createElement('div'); var chip=document.createElement('span'); chip.style.cssText='display:inline-block;width:12px;height:12px;border-radius:2px;background:'+cc.color+';margin-right:6px';
+    rr.appendChild(chip); rr.appendChild(document.createTextNode(cc.label)); legendDiv.appendChild(rr);
+  }
+
+  if(lastHover){
+    var text = 'eq(x)= '+fmtNum(lastHover.y)+'　x='+fmtNum(lastHover.x)+'　['+(lastHover.label||'')+']';
+    hoverTip.textContent = text;
+    hoverTip.style.display = 'block';
+    var tipRect = hoverTip.getBoundingClientRect();
+    var vx = Math.min(window.innerWidth - tipRect.width - 6, Math.max(6, lastHover.clientX + 12));
+    var vy = Math.min(window.innerHeight - tipRect.height - 6, Math.max(6, lastHover.clientY + 12));
+    hoverTip.style.left = vx + 'px';
+    hoverTip.style.top  = vy + 'px';
+  }else{
+    hoverTip.style.display='none';
+  }
+}
+function drawShape(ctx, shape, x, y, size, fill, stroke, lineWidth){
+  ctx.save(); ctx.strokeStyle=stroke; ctx.lineWidth=lineWidth||1.2; ctx.beginPath();
+  if(shape==='circle'){ ctx.arc(x,y,size,0,Math.PI*2); }
+  else if(shape==='square'){ ctx.rect(x-size,y-size,size*2,size*2); }
+  else if(shape==='triangle'){ ctx.moveTo(x,y-size); ctx.lineTo(x+size,y+size); ctx.lineTo(x-size,y+size); ctx.closePath(); }
+  else if(shape==='diamond'){ ctx.moveTo(x,y-size); ctx.lineTo(x+size,y); ctx.lineTo(x,y+size); ctx.lineTo(x-size,y); ctx.closePath(); }
+  else { ctx.arc(x,y,size,0,Math.PI*2); }
+  if(fill && fill!=='transparent' && fill!=='rgba(0,0,0,0)'){ ctx.fillStyle=fill; ctx.fill(); }
+  ctx.stroke(); ctx.restore();
+}
+
+/* ==== rAF 節流 ==== */
+var rafId=0, pendingReason=null;
+var redrawPending=false;
+function scheduleUpdate(reason){
+  if(pendingReason==='param' && reason!=='param') pendingReason=reason;
+  else if(!pendingReason) pendingReason=reason;
+  if(rafId) return;
+  rafId=requestAnimationFrame(function(){ var r=pendingReason||'unknown'; pendingReason=null; rafId=0; updatePlot({reason:r}); });
+}
+function scheduleRedraw(){
+  if(redrawPending) return;
+  redrawPending=true;
+  requestAnimationFrame(function(){ redrawPending=false; drawChart(combosCache); });
+}
+
+/* ==== 更新流程 ==== */
+function updatePlot(o){
+  if(o && (o.reason==='hover' || o.reason==='redraw' || o.reason==='lines')){
+    drawChart(combosCache);
+    return;
+  }
+  if(!csvRows.length){ messageDiv.style.display='block'; messageDiv.textContent='尚未載入資料'; ctx.clearRect(0,0,chartCanvas.width,chartCanvas.height); return; }
+  if(!eqAssign){ messageDiv.style.display='block'; messageDiv.textContent='方程式未定義'; ctx.clearRect(0,0,chartCanvas.width,chartCanvas.height); return; }
+  if(!combosCache || o.reason==='csv' || o.reason==='xchange' || o.reason==='filter' || o.reason==='resize'){
+    combosCache=buildCombosStructure();
+  }
+  requestEvaluate();
+}
+
+/* ==== Worker ==== */
+var worker=null;
+function ensureWorker(){
+  if(worker) return worker;
+  var lines=[];
+  lines.push('(function(){');
+  lines.push('var dataCols={}, rowCount=0, compiled=null, SUPPORT_POW=true, autotuneCancel=false, paramAllKeys=[];');
+  lines.push('function jsify(s){ return String(s).replace(/\\^/g,"**"); }');
+  lines.push('function parenBalanced(s){ var st=[], c,i; for(i=0;i<s.length;i++){ c=s.charAt(i); if(c==="(") st.push("("); else if(c===")"){ if(!st.length) return false; st.pop(); } } return st.length===0; }');
+  lines.push('function clamp(x,lo,hi){ return Math.max(lo, Math.min(hi, x)); }');
+  lines.push('function inv(z){ return 1/z; }');
+  lines.push('function erf(x){ var sign=x<0?-1:1; x=Math.abs(x); var t=1/(1+0.3275911*x); var a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429; var poly=((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t; var y=1 - poly*Math.exp(-x*x); return sign*y; }');
+  lines.push('function normsInv(p){ if(p<=0||p>=1) return NaN; var a1=-3.969683028665376e+01,a2=2.209460984245205e+02,a3=-2.759285104469687e+02,a4=1.383577518672690e+02,a5=-3.066479806614716e+01,a6=2.506628277459239e+00; var b1=-5.447609879822406e+01,b2=1.615858368580409e+02,b3=-1.556989798598866e+02,b4=6.680131188771972e+01,b5=-1.328068155288572e+01; var c1=-7.784894002430293e-03,c2=-3.223964580411365e-01,c3=-2.400758277161838e+00,c4=-2.549732539343734e+00,c5=4.374664141464968e+00,c6=2.938163982698783e+00; var d1=7.784695709041462e-03,d2=3.224671290700398e-01,d3=2.445134137142996e+00,d4=3.754408661907416e+00; var pLow=0.02425,pHigh=1-pLow,q,r,x; if(p<pLow){ q=Math.sqrt(-2*Math.log(p)); x=(((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q+c6)/((((d1*q+d2)*q+d3)*q+d4)*q+1); } else if(p>pHigh){ q=Math.sqrt(-2*Math.log(1-p)); x=-(((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q+c6)/((((d1*q+d2)*q+d3)*q+d4)*q+1); } else { q=p-0.5; r=q*q; x=(((((a1*r+a2)*r+a3)*r+a4)*r+a5)*r+a6)*q/((((b1*r+b2)*r+b3)*r+b4)*r+b5)*r+1; } var e=0.5*(1-erf(-x/Math.SQRT2))-p; var u=e*Math.SQRT2*Math.exp(x*x/2); x=x - u/(1 + x*u/2); return x; }');
+  lines.push('var helperMap={ clamp:clamp, inv:inv, min:Math.min, max:Math.max, abs:Math.abs, sqrt:Math.sqrt, log:Math.log, LN:Math.log, ln:Math.log, exp:Math.exp, EXP:Math.exp, pow:Math.pow, NORMSINV:normsInv, normsInv:normsInv, erf:erf };');
+  lines.push('function unique(arr){ var out=[], seen={}; for(var i=0;i<arr.length;i++){ var v=arr[i]; if(!seen[v]){ seen[v]=1; out.push(v); } } return out; }');
+  lines.push('function supportPow(){ try{ var F=Function; var fn=F.apply(null, ["return (2**3);"]); var r=fn(); return r===8; }catch(e){ return false; } }');
+  lines.push('SUPPORT_POW = supportPow();');
+  lines.push('function rewritePow(s){ if(SUPPORT_POW) return s; return s.replace(/([^\\s()]+)\\s*\\*\\*\\s*([^\\s()]+)/g, "pow($1,$2)"); }');
+
+  lines.push('function compile(assignments, eqExpr, params, colNames){');
+  lines.push('  paramAllKeys=Object.keys(params);');
+  lines.push('  var base=unique(paramAllKeys.concat(colNames).concat(Object.keys(helperMap)));');
+  lines.push('  var assignFns=[], assignNames=[], assignVars=[]; var F=Function;');
+  lines.push('  for(var i=0;i<assignments.length;i++){ var a=assignments[i]; var names=unique(base.slice()); var expr=rewritePow(jsify(a.expr)); if(!parenBalanced(expr)) return {error:"Unbalanced parentheses in assignment: "+a.var};');
+  lines.push('    try{ var args=names.concat("return ( "+expr+" );"); var fn=F.apply(null, args); assignFns.push(fn); assignNames.push(names); assignVars.push(a.var); base.push(a.var); }catch(e){ return {error:"Compile assignment failed: "+a.var+" :: "+String(e)}; } }');
+  lines.push('  var eqFn=null, eqNames=[];');
+  lines.push('  if(eqExpr){ var eq=rewritePow(jsify(eqExpr)); if(!parenBalanced(eq)) return {error:"Unbalanced parentheses in eq"}; var names2=unique(base.slice()); try{ var args2=names2.concat("return ( "+eq+" );"); eqFn=F.apply(null, args2); eqNames=names2; }catch(e){ return {error:"Compile eq failed: "+String(e)}; } }');
+  lines.push('  return { assignFns:assignFns, assignNames:assignNames, assignVars:assignVars, eqFn:eqFn, eqNames:eqNames };');
+  lines.push('}');
+  lines.push('function valuesByNames(names, rowIdx, locals, params){ var out=new Array(names.length), k; for(var i=0;i<names.length;i++){ k=names[i]; if(params.hasOwnProperty(k)) out[i]=params[k]; else if(dataCols.hasOwnProperty(k)) out[i]=dataCols[k][rowIdx]; else if(locals && locals.hasOwnProperty(k)) out[i]=locals[k]; else if(helperMap.hasOwnProperty(k)) out[i]=helperMap[k]; else out[i]=undefined; } return out; }');
+  lines.push('function valuesByNamesOV(names, rowIdx, locals, params, ov){ var out=new Array(names.length), k; for(var i=0;i<names.length;i++){ k=names[i]; if(params.hasOwnProperty(k)) out[i]=params[k]; else if(ov && (k in ov)) out[i]=ov[k]; else if(dataCols.hasOwnProperty(k)) out[i]=dataCols[k][rowIdx]; else if(locals && locals.hasOwnProperty(k)) out[i]=locals[k]; else if(helperMap.hasOwnProperty(k)) out[i]=helperMap[k]; else out[i]=undefined; } return out; }');
+  lines.push('function computeEqAtRow(compiled, rowIdx, params){ var locals={}; for(var j=0;j<compiled.assignFns.length;j++){ var vals=valuesByNames(compiled.assignNames[j], rowIdx, locals, params||{}); var v=NaN; try{ v=compiled.assignFns[j].apply(null, vals); }catch(e){ v=NaN; } locals[compiled.assignVars[j]]=v; } var eqVals=valuesByNames(compiled.eqNames, rowIdx, locals, params||{}); var y=NaN; try{ y=compiled.eqFn.apply(null, eqVals); }catch(e){ y=NaN; } return y; }');
+  lines.push('function computeEqAtRowOV(compiled, rowIdx, params, ov){ var locals={}; for(var j=0;j<compiled.assignFns.length;j++){ var vals=valuesByNamesOV(compiled.assignNames[j], rowIdx, locals, params||{}, ov); var v=NaN; try{ v=compiled.assignFns[j].apply(null, vals); }catch(e){ v=NaN; } locals[compiled.assignVars[j]]=v; } var eqVals=valuesByNamesOV(compiled.eqNames, rowIdx, locals, params||{}, ov); var y=NaN; try{ y=compiled.eqFn.apply(null, eqVals); }catch(e){ y=NaN; } return y; }');
+
+  lines.push('var RAND_SEED=0; function srand(seed){ RAND_SEED=(seed>>>0)||0; } function rand(){ RAND_SEED=(1664525*RAND_SEED + 1013904223)>>>0; return (RAND_SEED>>>0)/4294967296; } function randSign(){ return rand()<0.5? -1:1; }');
+  lines.push('function qsSelect(arr, k){ var left=0, right=arr.length-1; while(true){ if(left===right) return arr[left]; var pivotIndex=left+((right-left)>>1); pivotIndex=partition(arr,left,right,pivotIndex); if(k===pivotIndex) return arr[k]; else if(k<pivotIndex) right=pivotIndex-1; else left=pivotIndex+1; } }');
+  lines.push('function partition(arr,left,right,pivotIndex){ var pivot=arr[pivotIndex]; swap(arr,pivotIndex,right); var store=left; for(var i=left;i<right;i++){ if(arr[i]<pivot){ swap(arr,store,i); store++; } } swap(arr,right,store); return store; }');
+  lines.push('function swap(arr,i,j){ var t=arr[i]; arr[i]=arr[j]; arr[j]=t; }');
+
+  lines.push('var tmpR=null;');
+  lines.push('function objective(P, target, opts){ var metric=(opts&&opts.metric)||"rel"; var worstFrac=(opts&&opts.worstFrac)||0; var idxArr=opts&&opts.idxArr; var useAll=!idxArr; var N = useAll? rowCount : idxArr.length; if(N<=0) return 1/0; if(!tmpR || tmpR.length!==N) tmpR=new Float64Array(N); var i, idx, y, f, r; var sum=0;');
+  lines.push('  for(i=0;i<N;i++){ idx=useAll? i : idxArr[i]; y = dataCols[opts.valueKey][idx];f = computeEqAtRow(compiled, idx, P);if (!isFinite(f) || !isFinite(y)) { tmpR[i] = 1e9; continue; }r = Math.abs(f - y);if (metric === "rel") {var denom = Math.abs(y);if (!(denom > 0)) denom = 1e-12;r = r / denom;}if (!isFinite(r)) r = 1e9;tmpR[i] = r;}');
+  lines.push('  var len=N; if(len<=0) return 1/0; var weightTop=2.0, thr=-1; worstFrac=Math.max(0, Math.min(0.9, worstFrac));');
+  lines.push('  if(worstFrac>0){ var k=Math.max(0, Math.min(len-1, Math.floor((1-worstFrac)*len))); var buf=new Float64Array(len); for(i=0;i<len;i++) buf[i]=isFinite(tmpR[i]) ? tmpR[i] : 1e12; thr=qsSelect(buf, k); }');
+  lines.push('  for(i=0;i<len;i++){ r=tmpR[i]; if (!isFinite(r)) r = 1e9; var pen = r>target? (r-target)*(r-target) : 0; if(worstFrac>0 && r>=thr) pen*=weightTop; sum+=pen; }');
+  lines.push('  return sum/len; }');
+
+  lines.push('function fullFromTuned(baseP, keys, vec, bounds){ var P={}, i, ks=Object.keys(baseP); for(i=0;i<ks.length;i++){ var k=ks[i]; P[k]=baseP[k]; } for(i=0;i<keys.length;i++){ var kk=keys[i]; var v=vec[i]; var b=bounds[kk]; if(b){ if(v<b.min) v=b.min; if(v>b.max) v=b.max; } P[kk]=v; } return P; }');
+  lines.push('function vecFromFull(P, keys){ var v=new Array(keys.length), i; for(i=0;i<keys.length;i++) v[i]=P[keys[i]]; return v; }');
+  lines.push('// === 殘差向量（LSQ 用，不做門檻懲罰）===');
+  lines.push('function residualsVector(P, opts){');
+  lines.push('  var idxArr = opts && opts.idxArr;');
+  lines.push('  var useAll = !idxArr;');
+  lines.push('  var N = useAll ? rowCount : idxArr.length;');
+  lines.push('  if(N<=0) return new Float64Array(0);');
+  lines.push('  var r = new Float64Array(N);');
+  lines.push('  for(var i=0;i<N;i++){');
+  lines.push('    var idx = useAll ? i : idxArr[i];');
+  lines.push('    var y   = dataCols[opts.valueKey][idx];');
+  lines.push('    var f   = computeEqAtRow(compiled, idx, P);');
+  lines.push('    var diff = (!isFinite(f) || !isFinite(y)) ? 1e9 : Math.abs(f - y);');
+  lines.push("    if(opts.metric === 'rel'){");
+  lines.push('      var denom = Math.abs(y);');
+  lines.push('      if(!(denom > 0)) denom = 1e-12;');
+  lines.push('      diff = diff / denom;');
+  lines.push('    }');
+  lines.push('    if(!isFinite(diff)) diff = 1e9;');
+  lines.push('    r[i] = diff;');
+  lines.push('  }');
+  lines.push('  return r;');
+  lines.push('}');
+  lines.push('');
+  lines.push('// === robust loss 權重（psi(r)/r 近似）===');
+  lines.push('function robustWeights(r, loss){');
+  lines.push('  var w = new Float64Array(r.length);');
+  lines.push('  var i;');
+  lines.push("  if(loss==='linear' || !loss){");
+  lines.push('    for(i=0;i<r.length;i++) w[i]=1.0;');
+  lines.push('    return w;');
+  lines.push('  }');
+  lines.push("  if(loss==='soft_l1'){");
+  lines.push('    for(i=0;i<r.length;i++){ var t=1+ r[i]*r[i]; w[i]= 1/Math.sqrt(t); }');
+  lines.push('    return w;');
+  lines.push('  }');
+  lines.push("  if(loss==='huber'){");
+  lines.push('    for(i=0;i<r.length;i++){ var ri=Math.abs(r[i]); w[i]= (ri<=1)? 1 : 1/ri; }');
+  lines.push('    return w;');
+  lines.push('  }');
+  lines.push("  if(loss==='cauchy'){");
+  lines.push('    for(i=0;i<r.length;i++){ var t=1+r[i]*r[i]; w[i]=1/t; }');
+  lines.push('    return w;');
+  lines.push('  }');
+  lines.push("  if(loss==='arctan'){");
+  lines.push('    for(i=0;i<r.length;i++){ var t=1+0.5*r[i]*r[i]; w[i]=1/t; }');
+  lines.push('    return w;');
+  lines.push('  }');
+  lines.push('  for(i=0;i<r.length;i++) w[i]=1.0;');
+  lines.push('  return w;');
+  lines.push('}');
+  lines.push('');
+  lines.push('// === 有限差分 Jacobian（對 tuneKeys）===');
+  lines.push('function jacobianFD(P0, keys, opts){');
+  lines.push('  var r0 = residualsVector(P0, opts);');
+  lines.push('  var N = r0.length, d = keys.length;');
+  lines.push('  var J = new Float64Array(N*d);');
+  lines.push('  if(d===0 || N===0) return {J:J, r:r0};');
+  lines.push('  var bounds = opts.bounds || {};');
+  lines.push('  var epsMap={}, j;');
+  lines.push('  for(j=0;j<d;j++){');
+  lines.push('    var k=keys[j], b=bounds[k];');
+  lines.push('    var span = b? (b.max - b.min) : Math.max(1, Math.abs(P0[k])||1);');
+  lines.push('    epsMap[k] = Math.max(1e-8, span)*1e-4;');
+  lines.push('  }');
+  lines.push('  for(j=0;j<d;j++){');
+  lines.push('    var key = keys[j];');
+  lines.push('    var Pp = {}; var ks=Object.keys(P0); for(var q=0;q<ks.length;q++){ Pp[ks[q]]=P0[ks[q]]; }');
+  lines.push('    var e  = epsMap[key];');
+  lines.push('    if(bounds[key] && bounds[key].max!=null && (Pp[key]+e)>bounds[key].max) e = Math.max(1e-12, bounds[key].max - Pp[key]);');
+  lines.push('    Pp[key] = Pp[key] + e;');
+  lines.push('    var r1 = residualsVector(Pp, opts);');
+  lines.push('    for(var i=0;i<N;i++){');
+  lines.push('      J[i*d + j] = (r1[i] - r0[i]) / e;');
+  lines.push('    }');
+  lines.push('  }');
+  lines.push('  return {J:J, r:r0};');
+  lines.push('}');
+  lines.push('');
+  lines.push('// === LM（Levenberg–Marquardt）===');
+  lines.push('function lmRefineLSQ(P0, keys, opts){');
+  lines.push('  var maxIter = (opts && opts.maxIter) || 50;');
+  lines.push('  var timeEnd = Date.now() + ((opts&&opts.timeBudget)||200);');
+  lines.push('  var bounds  = opts.bounds || {};');
+  lines.push("  var loss    = opts.loss || 'soft_l1';");
+  lines.push('  var lam     = (opts && opts.lam0)!=null ? opts.lam0 : 1e-2;');
+  lines.push('  function evalCost(P){');
+  lines.push('    var r = residualsVector(P, opts);');
+  lines.push('    var w = robustWeights(r, loss);');
+  lines.push('    var s = 0;');
+  lines.push('    for(var i=0;i<r.length;i++){ var ri=r[i]*Math.sqrt(w[i]); s += ri*ri; }');
+  lines.push('    return s;');
+  lines.push('  }');
+  lines.push('  function proj(P){');
+  lines.push('    var Q={}, ks=Object.keys(P);');
+  lines.push('    for(var i=0;i<ks.length;i++){');
+  lines.push('      var k=ks[i], v=P[k], b=bounds[k];');
+  lines.push('      if(b){ if(v<b.min) v=b.min; if(v>b.max) v=b.max; }');
+  lines.push('      Q[k]=v;');
+  lines.push('    }');
+  lines.push('    return Q;');
+  lines.push('  }');
+  lines.push('  var P = proj(P0), bestP=proj(P0), bestF=evalCost(P);');
+  lines.push('  var d = keys.length, i;');
+  lines.push('  for(var it=0; it<maxIter && Date.now()<timeEnd; it++){');
+  lines.push('    var RJ = jacobianFD(P, keys, opts);');
+  lines.push('    var r  = RJ.r, J = RJ.J, N=r.length;');
+  lines.push('    if(N===0 || d===0) break;');
+  lines.push('    var w  = robustWeights(r, loss);');
+  lines.push('    var JTJ = new Float64Array(d*d);');
+  lines.push('    var JTr = new Float64Array(d);');
+  lines.push('    for(i=0;i<N;i++){');
+  lines.push('      var wi = Math.sqrt(w[i]);');
+  lines.push('      for(var j=0;j<d;j++){');
+  lines.push('        var Jij = J[i*d+j]*wi;');
+  lines.push('        JTr[j] += Jij * (r[i]*wi);');
+  lines.push('        for(var k=0;k<d;k++){ JTJ[j*d+k] += Jij * (J[i*d+k]*wi); }');
+  lines.push('      }');
+  lines.push('    }');
+  lines.push('    for(i=0;i<d;i++){ JTJ[i*d+i] += lam; }');
+  lines.push('    var step = gaussSolveSquare(JTJ, JTr);');
+  lines.push('    if(!step){ lam *= 10; continue; }');
+  lines.push('    var Pn = {};');
+  lines.push('    for(i=0;i<keys.length;i++){ var k=keys[i]; Pn[k]=P[k] - step[i]; }');
+  lines.push('    Pn = proj(Pn);');
+  lines.push('    var fn = evalCost(Pn);');
+  lines.push('    if(fn < bestF){ P = Pn; bestP=Pn; bestF=fn; lam = Math.max(1e-12, lam/3); }');
+  lines.push('    else{ lam *= 6; }');
+  lines.push('  }');
+  lines.push('  return {P:bestP, obj:bestF};');
+  lines.push('}');
+  lines.push('');
+  lines.push('// === TRF（Trust-Region 反射式近似；含邊界）===');
+  lines.push('function trfRefineLSQ(P0, keys, opts){');
+  lines.push('  var maxIter = (opts && opts.maxIter) || 60;');
+  lines.push('  var timeEnd = Date.now() + ((opts&&opts.timeBudget)||200);');
+  lines.push('  var bounds  = opts.bounds || {};');
+  lines.push("  var loss    = opts.loss || 'soft_l1';");
+  lines.push('  var delta   = (opts && opts.delta0)!=null ? opts.delta0 : 1.0;');
+  lines.push('  function evalCost(P){');
+  lines.push('    var r = residualsVector(P, opts);');
+  lines.push('    var w = robustWeights(r, loss);');
+  lines.push('    var s = 0; for(var i=0;i<r.length;i++){ var t=r[i]*Math.sqrt(w[i]); s+=t*t; } return s;');
+  lines.push('  }');
+  lines.push('  function proj(P){');
+  lines.push('    var Q={}, ks=Object.keys(P);');
+  lines.push('    for(var i=0;i<ks.length;i++){');
+  lines.push('      var k=ks[i], v=P[k], b=bounds[k];');
+  lines.push('      if(b){ if(v<b.min) v=b.min; if(v>b.max) v=b.max; }');
+  lines.push('      Q[k]=v;');
+  lines.push('    }');
+  lines.push('    return Q;');
+  lines.push('  }');
+  lines.push('  var P = proj(P0), bestP=P, bestF=evalCost(P);');
+  lines.push('  var d = keys.length, i;');
+  lines.push('  for(var it=0; it<maxIter && Date.now()<timeEnd; it++){');
+  lines.push('    var RJ = jacobianFD(P, keys, opts);');
+  lines.push('    var r  = RJ.r, J = RJ.J, N=r.length;');
+  lines.push('    if(N===0 || d===0) break;');
+  lines.push('    var w  = robustWeights(r, loss);');
+  lines.push('    var JTJ = new Float64Array(d*d);');
+  lines.push('    var JTr = new Float64Array(d);');
+  lines.push('    for(i=0;i<N;i++){');
+  lines.push('      var wi = Math.sqrt(w[i]);');
+  lines.push('      for(var j=0;j<d;j++){');
+  lines.push('        var Jij = J[i*d+j]*wi;');
+  lines.push('        JTr[j] += Jij * (r[i]*wi);');
+  lines.push('        for(var k=0;k<d;k++){ JTJ[j*d+k] += Jij * (J[i*d+k]*wi); }');
+  lines.push('      }');
+  lines.push('    }');
+  lines.push('    var pGN = gaussSolveSquare(JTJ, JTr);');
+  lines.push('    if(!pGN){');
+  lines.push('      for(i=0;i<d;i++) JTJ[i*d+i] += 1e-3;');
+  lines.push('      pGN = gaussSolveSquare(JTJ, JTr);');
+  lines.push('      if(!pGN) break;');
+  lines.push('    }');
+  lines.push('    var norm=0; for(i=0;i<d;i++) norm += pGN[i]*pGN[i]; norm=Math.sqrt(norm);');
+  lines.push('    var scale = (norm>delta && norm>0) ? (delta/norm) : 1.0;');
+  lines.push('    var Pn = {};');
+  lines.push('    for(i=0;i<keys.length;i++){ var k=keys[i]; Pn[k]=P[k] - scale*pGN[i]; }');
+  lines.push('    Pn = proj(Pn);');
+  lines.push('    var f0 = bestF, fn = evalCost(Pn);');
+  lines.push('    var ared = f0 - fn;');
+  lines.push('    var pred=0; for(i=0;i<d;i++){ var s=0; for(var j=0;j<d;j++) s += JTJ[i*d+j]* (scale*pGN[j]); pred += (scale*pGN[i]) * s; } pred *= 0.5;');
+  lines.push('    var rho = (pred>0)? (ared / pred) : -1;');
+  lines.push('    if(rho > 0.25){');
+  lines.push('      P = Pn; bestP=Pn; bestF=fn;');
+  lines.push('      if(rho>0.75 && Math.abs(norm - delta)<1e-12) delta = Math.min(delta*2, 10);');
+  lines.push('    }else{');
+  lines.push('      delta = Math.max(delta*0.5, 1e-6);');
+  lines.push('    }');
+  lines.push('  }');
+  lines.push('  return {P:bestP, obj:bestF};');
+  lines.push('}');
+  lines.push('');
+  lines.push('// 小型方陣線性系統解（LM/TRF 用）');
+  lines.push('function gaussSolveSquare(A, b){');
+  lines.push('  var n=b.length; var M=new Float64Array(n*(n+1));');
+  lines.push('  for(var i=0;i<n;i++){');
+  lines.push('    for(var j=0;j<n;j++) M[i*(n+1)+j] = A[i*n+j];');
+  lines.push('    M[i*(n+1)+n] = b[i];');
+  lines.push('  }');
+  lines.push('  for(var i=0;i<n;i++){');
+  lines.push('    var piv=i, maxv=Math.abs(M[i*(n+1)+i]);');
+  lines.push('    for(var r=i+1;r<n;r++){');
+  lines.push('      var v=Math.abs(M[r*(n+1)+i]); if(v>maxv){maxv=v; piv=r;}');
+  lines.push('    }');
+  lines.push('    if(maxv<1e-18) return null;');
+  lines.push('    if(piv!==i){');
+  lines.push('      for(var c=i;c<=n;c++){');
+  lines.push('        var tmp=M[i*(n+1)+c]; M[i*(n+1)+c]=M[piv*(n+1)+c]; M[piv*(n+1)+c]=tmp;');
+  lines.push('      }');
+  lines.push('    }');
+  lines.push('    var diag = M[i*(n+1)+i];');
+  lines.push('    for(var c=i;c<=n;c++) M[i*(n+1)+c] /= diag;');
+  lines.push('    for(var r=0;r<n;r++){');
+  lines.push('      if(r===i) continue;');
+  lines.push('      var f = M[r*(n+1)+i]; if(f===0) continue;');
+  lines.push('      for(var c=i;c<=n;c++) M[r*(n+1)+c] -= f * M[i*(n+1)+c];');
+  lines.push('    }');
+  lines.push('  }');
+  lines.push('  var x=new Float64Array(n);');
+  lines.push('  for(var k=0;k<n;k++) x[k]=M[k*(n+1)+n];');
+  lines.push('  return x;');
+  lines.push('}');
+  lines.push('');
+  lines.push('// === 完整 CMA-ES（rank-μ + rank-1；對稱 Jacobi 分解）===');
+  lines.push('function cmaesSearch(P0, keys, target, opts){');
+  lines.push('  var timeEnd = Date.now() + ((opts&&opts.timeBudget)||200);');
+  lines.push('  var bounds  = opts.bounds || {};');
+  lines.push("  var metric  = opts.metric || 'rel';");
+  lines.push("  var valueKey= opts.valueKey || 'value';");
+  lines.push('  var idxArr  = opts.idxArr || null;');
+  lines.push("  var loss    = opts.loss || 'soft_l1';");
+  lines.push('  var d = keys.length;');
+  lines.push('  if(d===0) return {P:P0, obj:objective(P0, target, opts)};');
+  lines.push('');
+  lines.push('  function vecFrom(P){');
+  lines.push('    var v=new Float64Array(d);');
+  lines.push('    for(var i=0;i<d;i++) v[i]=P[keys[i]];');
+  lines.push('    return v;');
+  lines.push('  }');
+  lines.push('  function fromVec(v, base){');
+  lines.push('    var Q={}, ks=Object.keys(base||P0);');
+  lines.push('    for(var i=0;i<ks.length;i++) Q[ks[i]]= (base||P0)[ks[i]];');
+  lines.push('    for(var j=0;j<d;j++){');
+  lines.push('      var k=keys[j]; var b=bounds[k]; var x=v[j];');
+  lines.push('      if(b){ if(x<b.min) x=b.min; if(x>b.max) x=b.max; }');
+  lines.push('      Q[k]=x;');
+  lines.push('    }');
+  lines.push('    return Q;');
+  lines.push('  }');
+  lines.push('  function clampVec(v){');
+  lines.push('    for(var i=0;i<d;i++){');
+  lines.push('      var k=keys[i], b=bounds[k];');
+  lines.push('      if(b){ if(v[i]<b.min) v[i]=b.min; if(v[i]>b.max) v[i]=b.max; }');
+  lines.push('    }');
+  lines.push('    return v;');
+  lines.push('  }');
+  lines.push('');
+  lines.push('  var lambda = (opts.pop && opts.pop>0)? opts.pop : (4 + Math.floor(3*Math.log(d+1)));');
+  lines.push('  var mu = Math.floor(lambda/2);');
+  lines.push('  var w = new Float64Array(mu);');
+  lines.push('  var i,j; for(i=0;i<mu;i++) w[i]=Math.log(mu+0.5)-Math.log(i+1);');
+  lines.push('  var wSum=0; for(i=0;i<mu;i++) wSum+=w[i]; for(i=0;i<mu;i++) w[i]/=wSum;');
+  lines.push('  var m = vecFrom(P0);');
+  lines.push('  var span=new Float64Array(d);');
+  lines.push('  for(i=0;i<d;i++){');
+  lines.push('    var k=keys[i], b=bounds[k]; span[i] = b? (b.max-b.min) : Math.max(1, Math.abs(m[i])||1);');
+  lines.push('  }');
+  lines.push('  var sigma = (opts.sigma0>0? opts.sigma0 : 0.3);');
+  lines.push('  sigma = sigma * Math.max(1e-6, median(span));');
+  lines.push('  function median(a){ var s=Array.from(a).sort(function(a,b){return a-b;}); var n=s.length; return n? s[n>>1] : 1; }');
+  lines.push('');
+  lines.push('  var C = new Float64Array(d*d);');
+  lines.push('  for(i=0;i<d;i++) C[i*d+i]=1;');
+  lines.push('  var pc=new Float64Array(d), ps=new Float64Array(d);');
+  lines.push('  var cc=(4+d)/ (4+2*d);');
+  lines.push('  var cs=(d+4)/(d+4+3);');
+  lines.push('  var damps= 1 + 2*Math.max(0, Math.sqrt((d-1)/(d+1)) - 1 ) + cs;');
+  lines.push('  var mueff=0; for(i=0;i<mu;i++) mueff += w[i]*w[i]; mueff = 1/mueff;');
+  lines.push('  var c1 = 2/((d+1.3)*(d+1.3)) + (1-mueff)/((d+2)*(d+2));');
+  lines.push('  var cmu= Math.min(1-c1, 2*(mueff-2+1/mueff)/((d+2)*(d+2)+mueff));');
+  lines.push('  var chiN = Math.sqrt(d)*(1 - 1/(4*d) + 1/(21*d*d));');
+  lines.push('');
+  lines.push('  var B = new Float64Array(d*d), D = new Float64Array(d);');
+  lines.push('  for(i=0;i<d;i++){ B[i*d+i]=1; D[i]=1; }');
+  lines.push('');
+  lines.push('  function eigenDecompSym(Cmat, Bout, Dout){');
+  lines.push('    var d2=d;');
+  lines.push('    var A=new Float64Array(Cmat); ');
+  lines.push('    var V=new Float64Array(d2*d2); for(i=0;i<d2;i++) V[i*d2+i]=1;');
+  lines.push('    for(var it=0; it<60; it++){');
+  lines.push('      var p=0,q=1,maxv=Math.abs(A[1]);');
+  lines.push('      for(i=0;i<d2;i++) for(j=i+1;j<d2;j++){');
+  lines.push('        var v=Math.abs(A[i*d2+j]); if(v>maxv){maxv=v;p=i;q=j;}');
+  lines.push('      }');
+  lines.push('      if(maxv<1e-12) break;');
+  lines.push('      var app=A[p*d2+p], aqq=A[q*d2+q], apq=A[p*d2+q];');
+  lines.push('      var phi=0.5*Math.atan2(2*apq, (aqq-app));');
+  lines.push('      var c=Math.cos(phi), s=Math.sin(phi);');
+  lines.push('      for(i=0;i<d2;i++){');
+  lines.push('        var aip=A[i*d2+p], aiq=A[i*d2+q];');
+  lines.push('        A[i*d2+p]= c*aip - s*aiq;');
+  lines.push('        A[i*d2+q]= s*aip + c*aiq;');
+  lines.push('      }');
+  lines.push('      for(j=0;j<d2;j++){');
+  lines.push('        var apj=A[p*d2+j], aqj=A[q*d2+j];');
+  lines.push('        A[p*d2+j]= c*apj - s*aqj;');
+  lines.push('        A[q*d2+j]= s*apj + c*aqj;');
+  lines.push('      }');
+  lines.push('      A[p*d2+q]=A[q*d2+p]=0;');
+  lines.push('      for(i=0;i<d2;i++){');
+  lines.push('        var vip=V[i*d2+p], viq=V[i*d2+q];');
+  lines.push('        V[i*d2+p]= c*vip - s*viq;');
+  lines.push('        V[i*d2+q]= s*vip + c*viq;');
+  lines.push('      }');
+  lines.push('    }');
+  lines.push('    for(i=0;i<d2;i++){ Dout[i]=Math.sqrt(Math.max(1e-18, A[i*d2+i])); }');
+  lines.push('    for(i=0;i<d2;i++) for(j=0;j<d2;j++) Bout[i*d2+j]=V[i*d2+j];');
+  lines.push('  }');
+  lines.push('');
+  lines.push('  var eigIter=0, eigPeriod = Math.max(1, Math.floor(1.0 + 0.3*lambda/d));');
+  lines.push('  var bestP=fromVec(m, P0), bestObj=objective(bestP, target, opts);');
+  lines.push('');
+  lines.push('  var gens = Math.max(1, opts.cmaGen||8);');
+  lines.push('  for(var gen=0; gen<gens && Date.now()<timeEnd; gen++){');
+  lines.push('    if(eigIter % eigPeriod === 0){ eigenDecompSym(C, B, D); }');
+  lines.push('    eigIter++;');
+  lines.push('');
+  lines.push('    var cand = new Array(lambda);');
+  lines.push('    for(var k=0;k<lambda;k++){');
+  lines.push('      var z=new Float64Array(d);');
+  lines.push('      for(i=0;i<d;i++){');
+  lines.push('        var u1=Math.random()+1e-12, u2=Math.random();');
+  lines.push('        var R=Math.sqrt(-2*Math.log(u1)), Theta=2*Math.PI*u2;');
+  lines.push('        z[i]=R*Math.cos(Theta);');
+  lines.push('      }');
+  lines.push('      var Dz=new Float64Array(d); for(i=0;i<d;i++) Dz[i]=D[i]*z[i];');
+  lines.push('      var y=new Float64Array(d); for(i=0;i<d;i++){ var s=0; for(j=0;j<d;j++) s+= B[i*d+j]*Dz[j]; y[i]=s; }');
+  lines.push('      var x=new Float64Array(d); for(i=0;i<d;i++) x[i]= m[i] + sigma * y[i];');
+  lines.push('      clampVec(x);');
+  lines.push('      var Px = fromVec(x, P0);');
+  lines.push('      var fx = objective(Px, target, opts);');
+  lines.push('      cand[k]={x:x, y:y, f:fx, P:Px};');
+  lines.push('    }');
+  lines.push('    cand.sort(function(a,b){ return a.f - b.f; });');
+  lines.push('    if(cand[0].f < bestObj){ bestObj=cand[0].f; bestP=cand[0].P; }');
+  lines.push('    var oldm = m.slice();');
+  lines.push('    for(i=0;i<d;i++){ var s=0; for(j=0;j<mu;j++) s += w[j]*cand[j].x[i]; m[i]=s; }');
+  lines.push('    var invD=new Float64Array(d); for(i=0;i<d;i++) invD[i]= (D[i]>0? 1/D[i] : 1e6);');
+  lines.push('    var diff=new Float64Array(d); for(i=0;i<d;i++) diff[i]=(m[i]-oldm[i])/sigma;');
+  lines.push('    var t1=new Float64Array(d); for(i=0;i<d;i++){ var s=0; for(j=0;j<d;j++) s += B[j*d+i]*diff[j]; t1[i]=s; }');
+  lines.push('    var zmean=new Float64Array(d); for(i=0;i<d;i++) zmean[i]= t1[i]*invD[i];');
+  lines.push('    for(i=0;i<d;i++) ps[i] = (1-cs)*ps[i] + Math.sqrt(cs*(2-cs)*mueff) * zmean[i];');
+  lines.push('    var normps=0; for(i=0;i<d;i++) normps += ps[i]*ps[i]; normps=Math.sqrt(normps);');
+  lines.push('    var hsig = (normps / Math.sqrt(1 - Math.pow(1-cs, 2*(gen+1))) / chiN) < (1.4 + 2/(d+1)) ? 1 : 0;');
+  lines.push('    for(i=0;i<d;i++) pc[i] = (1-cc)*pc[i] + hsig*Math.sqrt(cc*(2-cc)*mueff) * diff[i];');
+  lines.push('    var rankMu = new Float64Array(d*d);');
+  lines.push('    for(j=0;j<mu;j++){');
+  lines.push('      var yyv=cand[j].y;');
+  lines.push('      for(var a=0;a<d;a++) for(var b=0;b<d;b++) rankMu[a*d+b] += w[j]*yyv[a]*yyv[b];');
+  lines.push('    }');
+  lines.push('    for(i=0;i<d;i++) for(j=0;j<d;j++){');
+  lines.push('      C[i*d+j] = (1 - c1 - cmu) * C[i*d+j]');
+  lines.push('               + c1 * ( pc[i]*pc[j] + (1-hsig)*cc*(2-cc)*C[i*d+j] )');
+  lines.push('               + cmu * rankMu[i*d+j];');
+  lines.push('    }');
+  lines.push('    sigma = sigma * Math.exp((cs/d)*(normps/chiN - 1));');
+  lines.push('  }');
+  lines.push('');
+  lines.push('  return {P:fromVec(m, P0), obj:objective(fromVec(m, P0), target, opts)};');
+  lines.push('}');
+
+
+  lines.push('function nmRefine(P0, keys, target, opts){ var timeEnd=Date.now()+((opts&&opts.timeBudget)||200); function evalP(P){ return objective(P, target, opts); } var d=keys.length; if(d===0) return {P:P0, obj:evalP(P0)}; var bounds=opts.bounds||{}; var x0=vecFromFull(P0, keys); var span=[], i; for(i=0;i<d;i++){ var k=keys[i]; var b=bounds[k]; var s=b? (b.max-b.min): Math.abs(P0[k])||1; span[i]=Math.max(1e-6, s*0.1); } var simplex=[]; simplex.push({x:x0.slice(), f:evalP(P0)}); for(i=0;i<d;i++){ var xi=x0.slice(); xi[i]=xi[i]+span[i]; var Pi=fullFromTuned(P0, keys, xi, bounds); simplex.push({x:xi, f:evalP(Pi)}); if(Date.now()>timeEnd) break; } var alpha=1, gamma=2, rho=0.5, sigma=0.5; function sortS(){ simplex.sort(function(a,b){ return a.f-b.f; }); } sortS(); while(Date.now()<timeEnd){ sortS(); var best=simplex[0]; var worst=simplex[simplex.length-1]; var second=simplex[simplex.length-2]; var xc=new Array(d), j; for(j=0;j<d;j++){ var sum=0; for(i=0;i<simplex.length-1;i++) sum+=simplex[i].x[j]; xc[j]=sum/(simplex.length-1); } function proj(v){ for(var q=0;q<d;q++){ var kk=keys[q], b=bounds[kk]; if(b){ if(v[q]<b.min) v[q]=b.min; if(v[q]>b.max) v[q]=b.max; } } return v; } var xr=new Array(d); for(i=0;i<d;i++) xr[i]=xc[i]+alpha*(xc[i]-worst.x[i]); xr=proj(xr); var Pr=fullFromTuned(P0, keys, xr, bounds); var fr=evalP(Pr); if(fr<best.f){ var xe=new Array(d); for(i=0;i<d;i++) xe[i]=xc[i]+gamma*(xr[i]-xc[i]); xe=proj(xe); var Pe=fullFromTuned(P0, keys, xe, bounds); var fe=evalP(Pe); if(fe<fr){ simplex[simplex.length-1]={x:xe,f:fe}; } else { simplex[simplex.length-1]={x:xr,f:fr}; } } else if(fr<second.f){ simplex[simplex.length-1]={x:xr,f:fr}; } else { var xc2=new Array(d); for(i=0;i<d;i++) xc2[i]=xc[i]+rho*(worst.x[i]-xc[i]); xc2=proj(xc2); var Pc=fullFromTuned(P0, keys, xc2, bounds); var fc=evalP(Pc); if(fc<worst.f){ simplex[simplex.length-1]={x:xc2,f:fc}; } else { var bestx=simplex[0].x; for(var j2=1;j2<simplex.length;j2++){ var xj=new Array(d); for(i=0;i<d;i++) xj[i]=bestx[i]+sigma*(simplex[j2].x[i]-bestx[i]); xj=proj(xj); simplex[j2].x=xj; var Pj=fullFromTuned(P0, keys, xj, bounds); simplex[j2].f=evalP(Pj); } } } } sortS(); var Pb=fullFromTuned(P0, keys, simplex[0].x, bounds); return {P:Pb, obj:simplex[0].f}; }');
+  lines.push('function powellLike(P0, keys, target, opts){ var timeEnd=Date.now()+((opts&&opts.timeBudget)||200), bounds=opts.bounds||{}; function copyAll(P){ var o={}, ks=Object.keys(P); for(var i=0;i<ks.length;i++){ o[ks[i]]=P[ks[i]]; } return o; } function shuffle(a){ for(var i=a.length-1;i>0;i--){ var j=(Math.floor(Math.random()*(i+1))); var t=a[i]; a[i]=a[j]; a[j]=t; } } function evalP(P){ return objective(P,target,opts); } var P=copyAll(P0); var bestP=copyAll(P0); var bestObj=objective(P,target,opts); var j; var step={}, i; for(i=0;i<keys.length;i++){ var k=keys[i]; var b=bounds[k]; var span=b? (b.max-b.min): Math.max(1, Math.abs(P[k])||1); step[k]=Math.max(1e-6, span/6); } var obj=evalP(P), bestObj=obj, bestP2=copyAll(P); var stagnate=0; while(Date.now()<timeEnd){ var order=keys.slice(); shuffle(order); var improved=false; for(var oi=0; oi<order.length; oi++){ var k=order[oi]; var s=step[k]; if(s<1e-9) continue; var Pp=copyAll(P); Pp[k]=Math.min(bounds[k]?bounds[k].max:1/0, (Pp[k]+s)); var objP=evalP(Pp); var Pm=copyAll(P); Pm[k]=Math.max(bounds[k]?bounds[k].min:-1/0, (Pm[k]-s)); var objM=evalP(Pm); if(objP<obj && objP<=objM){ P=Pp; obj=objP; improved=true; } else if(objM<obj){ P=Pm; obj=objM; improved=true; } else { step[k]=s*0.5; } if(obj<bestObj){ bestObj=obj; bestP2=copyAll(P); } if(Date.now()>timeEnd) break; } if(!improved){ stagnate++; if(stagnate>3){ var small=true; for(i=0;i<keys.length;i++){ if(step[keys[i]]>=1e-6){ small=false; break; } } if(small) break; } } else stagnate=0; } return {P:bestP2, obj:bestObj}; }');
+
+  lines.push('function spsaStage(P0, keys, target, opts){ var steps=opts.spsaSteps||0; if(steps<=0 || keys.length===0) return {P:P0, obj:objective(P,target,opts)}; var timeEnd=Date.now()+((opts&&opts.timeBudget)||200); var a0=opts.spsaA||0.1, c0=opts.spsaC||0.05; var alpha=0.602, gamma=0.101; function copyAll(P){ var o={}, ks=Object.keys(P); for(var i=0;i<ks.length;i++){ var k=ks[i]; o[k]=P[k]; } return o; } var P=copyAll(P0); var bestP=copyAll(P0); var bestObj=objective(P,target,opts); var j; var scale={}; for(j=0;j<keys.length;j++){ var k=keys[j]; var b=(opts.bounds||{})[k]; var span=b? (b.max-b.min): Math.max(1, Math.abs(P0[k])||1); scale[k]=Math.max(1e-9, span); } for(var i=0;i<steps;i++){ var ak=a0/Math.pow(i+1,alpha), ck=c0/Math.pow(i+1,gamma); var Pp=copyAll(P), Pm=copyAll(P); for(j=0;j<keys.length;j++){ var s=(Math.random()<0.5?-1:1); var key=keys[j]; var b=(opts.bounds||{})[key]; var step=ck*scale[key]*s; var xmax=b&&b.max!=null? b.max : 1/0; var xmin=b&&b.min!=null? b.min : -1/0; Pp[key]=Math.min(xmax, P[key] + step); Pm[key]=Math.max(xmin, P[key] - step); Pp["__d"+j]=s; } var fP=objective(Pp,target,opts), fM=objective(Pm,target,opts); for(j=0;j<keys.length;j++){ var key2=keys[j]; var di=Pp["__d"+j]; var g=(fP - fM)/(2*ck*scale[key2]*di); var nv=P[key2] - ak * g; var b2=(opts.bounds||{})[key2]; if(b2){ if(nv<b2.min) nv=b2.min; if(nv>b2.max) nv=b2.max; } P[key2]=nv; } var fo=objective(P,target,opts); if(fo<bestObj){ bestObj=fo; bestP=copyAll(P); } if(Date.now()>timeEnd) break; } return {P:bestP, obj:bestObj}; }');
+
+  lines.push('function linearWarmStart(P0, keys, opts){ if(!keys || !keys.length) return {ok:false, P:P0}; var idxArr=opts&&opts.idxArr; var useAll=!idxArr; var N = useAll? rowCount : idxArr.length; if(N<keys.length) return {ok:false,P:P0}; var d=keys.length; var A=new Array(d), i,j; for(i=0;i<d;i++){ A[i]=new Float64Array(N); } var b=new Float64Array(N); var Pbase={}, kk=Object.keys(P0); for(i=0;i<kk.length;i++) Pbase[kk[i]]=P0[kk[i]]; var f0, y, idx; var epsScale={}; for(j=0;j<d;j++){ var k=keys[j]; var bnd=(opts.bounds||{})[k]; var span=bnd ? (bnd.max-bnd.min): Math.max(1, Math.abs(P0[k])||1); epsScale[k]=Math.max(1e-6, span)*1e-3; } for(i=0;i<N;i++){ idx=useAll? i : idxArr[i]; f0=computeEqAtRow(compiled, idx, Pbase); y=dataCols[opts.valueKey][idx]; b[i]=y - f0; for(j=0;j<d;j++){ var key=keys[j]; var eps=epsScale[key]; var Pp={}; var ks=Object.keys(Pbase); for(var t=0;t<ks.length;t++) Pp[ks[t]]=Pbase[ks[t]]; Pp[key]=Pbase[key]+eps; var f1=computeEqAtRow(compiled, idx, Pp); A[j][i]=(f1 - f0)/eps; } } var G=new Array(d), rhs=new Float64Array(d); for(i=0;i<d;i++){ G[i]=new Float64Array(d); for(j=0;j<d;j++){ var sum=0, ii; for(ii=0; ii<N; ii++) sum+=A[i][ii]*A[j][ii]; G[i][j]=sum; } var s2=0; for(ii=0; ii<N; ii++) s2+=A[i][ii]*b[ii]; rhs[i]=s2; } for(i=0;i<d;i++){ G[i][i]+=1e-6; } var x=gaussSolve(G, rhs); if(!x){ return {ok:false,P:P0}; } var Pnew={}, k2; var ks2=Object.keys(Pbase); for(i=0;i<ks2.length;i++){ k2=ks2[i]; Pnew[k2]=Pbase[k2]; } for(j=0;j<d;j++){ var kj=keys[j]; Pnew[kj]=x[j] + Pbase[kj]; var bnd2=(opts.bounds||{})[kj]; if(bnd2){ if(Pnew[kj]<bnd2.min) Pnew[kj]=bnd2.min; if(Pnew[kj]>bnd2.max) Pnew[kj]=bnd2.max; } } return {ok:true, P:Pnew}; }');
+  lines.push('function gaussSolve(A, b){ var n=b.length; var i,j,k; var M=new Array(n); for(i=0;i<n;i++){ M[i]=new Float64Array(n+1); for(j=0;j<n;j++) M[i][j]=A[i][j]; M[i][n]=b[i]; } for(i=0;i<n;i++){ var maxRow=i, maxVal=Math.abs(M[i][i]); for(k=i+1;k<n;k++){ var v=Math.abs(M[k][i]); if(v>maxVal){ maxVal=v; maxRow=k; } } if(maxVal<1e-18) return null; if(maxRow!==i){ var tmp=M[i]; M[i]=M[maxRow]; M[maxRow]=tmp; } var piv=M[i][i]; for(j=i;j<=n;j++) M[i][j]/=piv; for(k=0;k<n;k++){ if(k===i) continue; var f=M[k][i]; if(f===0) continue; for(j=i;j<=n;j++) M[k][j]-=f*M[i][j]; } } var x=new Float64Array(n); for(i=0;i<n;i++) x[i]=M[i][n]; return x; }');
+
+  lines.push('onmessage=function(ev){ var d=ev.data; var cmd=d&&d.cmd; try{');
+  lines.push('  if(cmd==="load"){ dataCols=d.cols||{}; rowCount=d.rowCount||0; postMessage({ok:true,cmd:"load"}); return; }');
+  lines.push('  if(cmd==="compile"){ var r=compile(d.assignments||[], d.eq||"", d.params||{}, d.colNames||[]); if(r.error){ postMessage({error:r.error, cmd:"compile"}); return; } compiled=r; postMessage({ok:true,cmd:"compile"}); return; }');
+  lines.push('  if(cmd==="evalAll"){ if(!compiled||!compiled.eqFn){ postMessage({error:"Not compiled"}); return; } var eqY=new Float64Array(rowCount); for(var i=0;i<rowCount;i++){ eqY[i]=computeEqAtRow(compiled, i, d.params||{}); } postMessage({ok:true,cmd:"evalAll", eqY:eqY}, [eqY.buffer]); return; }');
+  lines.push('  if(cmd==="evalIdx"){ if(!compiled||!compiled.eqFn){ postMessage({error:"Not compiled"}); return; } var idxArr=d.idxArr||null; if(!idxArr||!idxArr.length){ postMessage({ok:true,cmd:"evalIdx", idx:new Uint32Array(0), y:new Float64Array(0)}); return; } var n=idxArr.length; var y=new Float64Array(n); var i; for(i=0;i<n;i++){ var idx=idxArr[i]; y[i]=computeEqAtRow(compiled, idx, d.params||{}); } postMessage({ok:true,cmd:"evalIdx", idx:idxArr, y:y}, [idxArr.buffer, y.buffer]); return; }');
+  lines.push('  if(cmd==="evalLine"){ if(!compiled||!compiled.eqFn){ postMessage({error:"Not compiled"}); return; } var xs=d.xs; var baseIdx=d.baseIdx||0; var xName=d.xVarName; var P=d.params||{}; var n=xs.length; var y=new Float64Array(n); var i; for(i=0;i<n;i++){ var ov={}; ov[xName]=xs[i]; y[i]=computeEqAtRowOV(compiled, baseIdx, P, ov); } postMessage({ok:true,cmd:"evalLine", key:d.comboKey, y:y}, [y.buffer]); return; }');
+  lines.push('  if(cmd==="evalLineSWIS"){');
+  lines.push('    if(!compiled||!compiled.eqFn){ postMessage({error:"Not compiled"}); return; }');
+  lines.push('    var xs = d.xs; var xName=d.xVarName; var comboX=d.comboX; var comboIdx=d.comboIdx; var numNames=d.numNames||[]; var P=d.params||{};');
+  lines.push('    var n=xs.length; var y=new Float64Array(n);');
+  lines.push('    function lowerBound(arr, x){ var lo=0, hi=arr.length-1; if(arr.length===0) return -1; if(x<arr[0]) return -1; if(x>=arr[hi]) return hi; while(lo<hi){ var mid=(lo+hi+1)>>1; if(arr[mid]<=x) lo=mid; else hi=mid-1; } return lo; }');
+  lines.push('    for(var i=0;i<n;i++){');
+  lines.push('      var x = xs[i];');
+  lines.push('      if(!(comboX && comboX.length)){ var ov0={}; ov0[xName]=x; y[i]=computeEqAtRowOV(compiled, 0, P, ov0); continue; }');
+  lines.push('      var lo = lowerBound(comboX, x), hi = lo+1; if(lo<0){ lo=0; hi=(comboX.length>1)?1:0; } if(hi>=comboX.length){ hi=comboX.length-1; lo=(hi>0)?hi-1:0; }');
+  lines.push('      var x0=comboX[lo], x1=comboX[hi]; var idx0=comboIdx[lo], idx1=comboIdx[hi]; var t = (x1!==x0)? ((x-x0)/(x1-x0)) : 0;');
+  lines.push('      var ov = {}; ov[xName]=x;');
+  lines.push('      for(var k=0;k<numNames.length;k++){ var nm=numNames[k]; var v0=dataCols[nm] && dataCols[nm][idx0]; var v1=dataCols[nm] && dataCols[nm][idx1]; if(typeof v0==="number" && typeof v1==="number"){ ov[nm]=(1-t)*v0 + t*v1; } }');
+  lines.push('      y[i]=computeEqAtRowOV(compiled, idx0, P, ov);');
+  lines.push('    }');
+  lines.push('    postMessage({ok:true,cmd:"evalLine", key:d.comboKey, y:y}, [y.buffer]); return;');
+  lines.push('  }');
+
+  lines.push('  if(cmd==="autotuneCancel"){ autotuneCancel=true; postMessage({ok:true,cmd:"autotuneCancelAck"}); return; }');
+
+  lines.push('  if(cmd==="autotune"){ autotuneCancel=false; ');
+  lines.push('    var assigns=d.assignments||[], eqStr=d.eq||"", P0=d.params||{}, bounds=d.bounds||{}, colNames=d.colNames||[], valueKey=d.valueKey||"value";');
+  lines.push('    var metric=d.metric||"rel";');
+  lines.push("    var loss=d.loss||'soft_l1'; var globalMethod=d.globalMethod||'none'; var cmaGen=d.cmaGen||8; var cmaPop=d.cmaPop||0; var cmaSigma0=(d.cmaSigma0>0?d.cmaSigma0:0.3);");
+
+  lines.push('    var targetFinal = d.target || 0.01; var tauWarn = d.tauWarn || targetFinal; var steps = Math.max(1, d.annealSteps||1); var timeBudget = d.timeBudgetMs||800; var spsaSteps=d.spsaSteps||0, spsaA=d.spsaA||0.1, spsaC=d.spsaC||0.05; var refineType=d.refineType||"nelder"; var worstFrac=Math.max(0, Math.min(0.9, d.worstFrac||0)); var tuneKeys = Array.isArray(d.tuneKeys) ? d.tuneKeys.slice() : Object.keys(P0); var seed=d.seed||0; var seeds=d.seeds||12;');
+  lines.push('    var now=function(){ return Date.now(); }; var t0=now();');
+  lines.push('    var R=compile(assigns, eqStr, P0, colNames); if(R.error){ postMessage({error:R.error,cmd:"autotune"}); return; } compiled=R;');
+
+  lines.push('    var idxArr = d.rowIdx && d.rowIdx.length? d.rowIdx : null; var N = idxArr? d.rowIdx.length : rowCount; if(N<=0){ postMessage({error:"No rows to tune on"}); return; }');
+
+  /* === A：允許 1 維 linearWarmStart，並消毒/夾取後才採用 === */
+  lines.push('    if(tuneKeys.length>0){ var lin = linearWarmStart(P0, tuneKeys, {idxArr:idxArr, bounds:bounds, valueKey:valueKey}); if(lin.ok){ var f0=objective(P0, targetFinal, {bounds:bounds, valueKey:valueKey, idxArr:idxArr, metric:metric}); var __P_lin=(function(){ var o={}, ks=paramAllKeys&&paramAllKeys.length?paramAllKeys:Object.keys(lin.P); for(var i=0;i<ks.length;i++){ var k=ks[i]; var v=lin.P[k]; if(typeof v!=="number"||!isFinite(v)) v=P0[k]; var b=bounds&&bounds[k]; if(b){ if(v<b.min) v=b.min; if(v>b.max) v=b.max; } o[k]=v; } return o; })(); var f1=objective(__P_lin, targetFinal, {bounds:bounds, valueKey:valueKey, idxArr:idxArr, metric:metric}); if(isFinite(f1) && f1<=f0){ P0=__P_lin; } } }');
+
+  lines.push('    function copyAll(P){ var o={}, ks=Object.keys(P); for(var i=0;i<ks.length;i++){ var k=ks[i]; o[k]=P[k]; } return o; }');
+  lines.push('    function randInit(Pbase){ var trial=copyAll(Pbase); for(var j=0;j<tuneKeys.length;j++){ var k=tuneKeys[j]; var b=bounds[k]; var span=b? (b.max-b.min): Math.max(1,Math.abs(Pbase[k])||1); var delta=(Math.random()*0.4 - 0.2)*span; var v=Pbase[k]+delta; if(b){ if(v<b.min) v=b.min; if(v>b.max) v=b.max; } trial[k]=v; } return trial; }');
+  lines.push('    var bestStart=P0; var bestObjStart=objective(P0, targetFinal, {bounds:bounds, valueKey:valueKey, idxArr:idxArr, metric:metric}); for(var s=0;s<seeds;s++){ var tr=randInit(P0); var fo=objective(tr, targetFinal, {bounds:bounds, valueKey:valueKey, idxArr:idxArr, metric:metric}); if(fo<bestObjStart){ bestObjStart=fo; bestStart=tr; } } P0=bestStart;');
+
+  lines.push('    var bestParams=copyAll(P0); var bestObj=objective(bestParams, targetFinal, {bounds:bounds, valueKey:valueKey, idxArr:idxArr, worstFrac:worstFrac, metric:metric});');
+  lines.push("    if(globalMethod==='cmaes' && tuneKeys.length>0){ ");
+  lines.push('      var remain0 = Math.max(50, Math.floor((timeBudget - (now()-t0))*0.35));');
+  lines.push('      var cmaRes = cmaesSearch(bestParams, tuneKeys, targetFinal, {bounds:bounds, valueKey:valueKey, idxArr:idxArr, metric:metric, timeBudget:remain0, loss:loss, cmaGen:cmaGen, pop:cmaPop, sigma0:cmaSigma0});');
+  lines.push('      if(cmaRes && isFinite(cmaRes.obj) && cmaRes.obj < bestObj){ bestParams=cmaRes.P; bestObj=cmaRes.obj; }');
+  lines.push('    }');
+
+  lines.push('    var schedule=[]; if(steps<=1){ schedule=[targetFinal]; } else { var startTau=Math.max(targetFinal, tauWarn); for(var st=0; st<steps; st++){ var tVal=startTau + (targetFinal-startTau)*(st/(steps-1)); schedule.push(tVal); } }');
+
+  lines.push('    if(!tuneKeys.length){ var cover0=0, ii; for(ii=0;ii<N;ii++){ var idx2=idxArr? idxArr[ii] : ii; var y2=dataCols[valueKey][idx2]; var f2=computeEqAtRow(compiled, idx2, P0); var r2=Math.abs(f2-y2); if(metric==="rel"){ r2=r2/(Math.abs(y2)+1e-12); } if(r2<=targetFinal) cover0++; } cover0=N? cover0/N : 0; postMessage({ok:true,cmd:"autotuneDone", bestParams:P0, bestObj:bestObj, coverage:cover0, note:"no_tunable"}); return; }');
+
+  lines.push('    for(var stage=0; stage<schedule.length; stage++){ var tau=schedule[stage]; if(autotuneCancel) break; var elapsed=now()-t0; var remain=timeBudget - elapsed; if(remain<=50) break; var stageBudget = Math.max(50, Math.floor(remain/(schedule.length-stage)));');
+  lines.push('      postMessage({ok:true, cmd:"autotuneProgress", percent: Math.max(1, Math.min(99, Math.floor( (elapsed/timeBudget)*100 ))) });');
+  lines.push('      var optsStage={ bounds:bounds, valueKey:valueKey, idxArr:idxArr, worstFrac:worstFrac, timeBudget:Math.floor(stageBudget*0.45), metric:metric };');
+  lines.push('      if(spsaSteps>0){ var spsaRes=spsaStage(bestParams, tuneKeys, tau, optsStage); bestParams=spsaRes.P; bestObj=spsaRes.obj; }');
+  lines.push('      var refineBudget = Math.max(30, Math.floor(stageBudget*0.5)); var locOpts={ bounds:bounds, valueKey:valueKey, idxArr:idxArr, worstFrac:worstFrac, timeBudget:refineBudget, metric:metric, loss:loss }; var localRes=null;');
+  lines.push('      if(refineType==="lm"){ localRes=lmRefineLSQ(bestParams, tuneKeys, Object.assign({}, locOpts, {maxIter:60, lam0:1e-2})); } else if(refineType==="trf"){ localRes=trfRefineLSQ(bestParams, tuneKeys, Object.assign({}, locOpts, {maxIter:60, delta0:1.0})); }');
+
+  lines.push('      if(refineType==="nelder"){ localRes=nmRefine(bestParams, tuneKeys, tau, locOpts); } else if(refineType==="powell"){ localRes=powellLike(bestParams, tuneKeys, tau, locOpts); }');
+  lines.push('      if(localRes && localRes.obj<bestObj){ bestObj=localRes.obj; bestParams=localRes.P; } if(bestObj===0) break; }');
+  lines.push('    if(autotuneCancel){ postMessage({ok:false,cmd:"autotuneDone", canceled:true}); return; }');
+  lines.push('    var cover=0, i2; for(i2=0;i2<N;i2++){ var idx3=idxArr? idxArr[i2] : i2; var y3=dataCols[valueKey][idx3]; var f3=computeEqAtRow(compiled, idx3, bestParams); var r3=Math.abs(f3-y3); if(metric==="rel"){ r3=r3/(Math.abs(y3)+1e-12); } if(r3<=targetFinal) cover++; } cover = N? cover/N : 0;');
+  lines.push('    var __ks=paramAllKeys&&paramAllKeys.length?paramAllKeys:Object.keys(bestParams); for(var __i=0;__i<__ks.length;__i++){ var __k=__ks[__i]; var __v=bestParams[__k]; if(typeof __v!=="number"||!isFinite(__v)) bestParams[__k]=P0[__k]; } postMessage({ok:true,cmd:"autotuneDone", bestParams:bestParams, bestObj:bestObj, coverage:cover }); return;');
+  lines.push('  }');
+
+  lines.push('  if(cmd==="selftest"){ var res={}; (function(){ var cols={ v1:new Float64Array([0.1,0.2]), v2:new Float64Array([0,0]) }; dataCols=cols; rowCount=2; var P={a:1,b:2,c:3}; var R=compile([], "c + b*v2 + a*v1", P, ["v1","v2"]); if(R.error){ res.basic=false; } else { compiled=R; var eqY=new Float64Array(2); for(var i=0;i<2;i++){ var locals={}; var e=valuesByNames(compiled.eqNames, i, locals, P); eqY[i]=compiled.eqFn.apply(null, e); } res.basic=(Math.abs(eqY[0]-3.1)<1e-12 && Math.abs(eqY[1]-3.2)<1e-12); var xs=new Float64Array([0,0.5,1]); res.lineLen=(xs.length===3); } })(); (function(){ var R=compile([], "c + (b*v2 + a*v1", {a:1,b:2,c:3}, ["v1","v2"]); res.parenError=!!(R && R.error); })(); (function(){ var R=compile([{var:"aa",expr:"v1*v1"},{var:"bb",expr:"v1+v2"}], "aa + bb + clamp(v1,0,1) - inv(10)", {a:0}, ["v1","v2"]); compiled=R; dataCols={v1:new Float64Array([0.1]), v2:new Float64Array([0])}; rowCount=1; var locals={}; for(var j=0;j<compiled.assignFns.length;j++){ var valsA=valuesByNames(compiled.assignNames[j], 0, locals, {}); var vv=NaN; try{ vv=compiled.assignFns[j].apply(null, valsA); }catch(e){ vv=NaN; } locals[compiled.assignVars[j]]=vv; } var vals=valuesByNames(compiled.eqNames, 0, locals, {}); var y=compiled.eqFn.apply(null, vals); res.assignHelper=Math.abs(y-0.11)<1e-9; })(); (function(){ var R=compile([], "v1+1", {}, ["v1"]); res.noUseStrict=!!(R && R.eqFn); })(); postMessage({ok:true,cmd:"selftest", res:res}); return; }');
+
+  lines.push('}catch(err){ postMessage({error:String(err),cmd:cmd||"unknown"}); } };');
+  lines.push('})();');
+  var blob=new Blob([lines.join('\n')], {type:'application/javascript'});
+  var url=URL.createObjectURL(blob);
+  worker=new Worker(url);
+  worker.onmessage=function(ev){ handleWorkerMessage(ev.data); };
+  worker.onerror=function(e){ showError("Worker 執行錯誤："+String(e.message||e.filename||e.lineno)); };
+  return worker;
+}
+
+/* ==== Worker 對話（含 SWIS 批次重繪控制） ==== */
+var swisExpected=0, swisDone=0, swisActive=false;
+function handleWorkerMessage(msg){
+  if(msg && msg.error){ showError("Worker 回報錯誤：\n"+msg.error); setTuning(false); return; }
+  if(!msg || !msg.cmd) return;
+  if(msg.cmd==='load'){ compiledReady=false; needsCompile=true; }
+  else if(msg.cmd==='compile'){ compiledReady=true; needsCompile=false; doPendingEval(); }
+  else if(msg.cmd==='evalAll'){
+    var eqY=msg.eqY; ensureEqCache(); for(var i=0;i<eqY.length;i++) eqYCache[i]=eqY[i];
+    mapEqYIntoCombosAndDraw();
+  } else if(msg.cmd==='evalIdx'){
+    var idx=msg.idx, y=msg.y; ensureEqCache(); for(var i=0;i<idx.length;i++){ var k=idx[i]; eqYCache[k]=y[i]; }
+    mapEqYIntoCombosAndDraw();
+  } else if(msg.cmd==='evalLine'){
+    if(combosCache && combosCache[msg.key]){
+      combosCache[msg.key].lineY = Array.prototype.slice.call(msg.y);
+    }
+    if(swisActive){
+      swisDone++;
+      if(swisDone>=swisExpected){
+        swisActive=false;
+        scheduleUpdate('redraw');
+      }
+    }else{
+      scheduleUpdate('redraw');
+    }
+  } else if(msg.cmd==='selftest'){ showTests(msg.res||{}); }
+  else if(msg.cmd==='autotuneProgress'){ if(tuning){ showTuneStatus('自動調參中… '+msg.percent+'%'); } }
+  else if(msg.cmd==='autotuneCancelAck'){ showTuneStatus('已取消'); setTimeout(function(){ setTuning(false); }, 400); }
+  else if(msg.cmd==='autotuneDone'){
+    if(msg.ok && msg.bestParams){
+      var __prev=params; var __next=Object.assign({}, __prev, msg.bestParams); Object.keys(__next).forEach(function(k){ var v=__next[k]; if(typeof v!=='number'||!isFinite(v)) __next[k]=__prev[k]; }); params=__next; buildParamControls(); /* 會觸發 updateExportText() */ requestEvaluate(); scheduleUpdate('autotune');
+      var tail = msg.note==='no_tunable' ? '（全部已鎖定或無可調）' : '';
+      showTuneStatus('完成：達標率 '+Math.round((msg.coverage||0)*1000)/10+'%'+tail);
+      setTimeout(function(){ setTuning(false); }, 900);
+      updateExportText();
+    }else{
+      showTuneStatus(msg.canceled? '已取消' : '未成功');
+      setTimeout(function(){ setTuning(false); }, 700);
+    }
+  }
+}
+function showError(text){ messageDiv.style.display='block'; messageDiv.textContent=String(text); }
+function ensureEqCache(){ if(!eqYCache || eqYCache.length!==csvRows.length){ eqYCache=new Float64Array(csvRows.length); for(var i=0;i<eqYCache.length;i++) eqYCache[i]=NaN; } }
+
+/* ★ 真實取樣：SWIS（曲線）；函數點一律用每列自身 eqY */
+function requestEvalLinesReal(){
+  if(!combosCache) return;
+  ensureWorker();
+  if(!compiledReady || needsCompile){
+    worker.postMessage({ cmd:'compile', assignments:assignments, eq:(eqAssign?eqAssign.expr:""), params:params, colNames:colNames });
+    return;
+  }
+  var numNames=[];
+  outer: for (var ci=0; ci<colNames.length; ci++){
+    var nm=colNames[ci];
+    if(nm===xVar || nm===valueKey) continue;
+    for (var r=0; r<csvRows.length; r++){
+      var v=csvRows[r][nm];
+      if (typeof v==='number' && isFinite(v)) { numNames.push(nm); continue outer; }
+    }
+  }
+
+  var expect=0; for (var key in combosCache){ var c=combosCache[key]; if(c.lineX && c.lineX.length) expect++; }
+  swisExpected=expect; swisDone=0; swisActive=expect>0;
+
+  for (var key in combosCache){
+    var c=combosCache[key];
+    if(!(c.lineX && c.lineX.length)) continue;
+    var xs = new Float64Array(c.lineX.length);
+    for (var i=0;i<c.lineX.length;i++) xs[i]=c.lineX[i];
+    var xData = new Float64Array(c.xData||[]);
+    var idxData = new Uint32Array(c.idxData||[]);
+    worker.postMessage({
+      cmd:'evalLineSWIS',
+      xs: xs,
+      comboKey: key,
+      xVarName: xVar,
+      comboX: xData,
+      comboIdx: idxData,
+      numNames: numNames,
+      params: params
+    }, [xs.buffer, xData.buffer, idxData.buffer]);
+  }
+}
+
+/* 將 eqY 映回各組點，並決定曲線（內插或真實取樣） */
+function mapEqYIntoCombosAndDraw(){
+  if(!combosCache) return;
+  for(var key in combosCache){
+    var c=combosCache[key];
+    for(var i2=0;i2<c.points.length;i2++){
+      var idx=c.points[i2].idx;
+      c.points[i2].eqY=(eqYCache && idx<eqYCache.length)? eqYCache[idx] : NaN;
+    }
+    if(realSampleChk && realSampleChk.checked){
+      // 保留舊線，等待 SWIS 新結果回來
+    }else{
+      c.lineY = (c.lineX&&c.lineX.length)? interpLineYFromEqPoints(c.points, c.lineX) : [];
+    }
+  }
+  if(realSampleChk && realSampleChk.checked){
+    scheduleUpdate('redraw');
+    requestEvalLinesReal();
+  }else{
+    drawChart(combosCache);
+  }
+}
+
+/* ==== 游標檢視器支援 ==== */
+function axes_xScale(v){
+  var a=lastAxes; if(!a) return NaN; if(a.useLogX){ if(!(v>0)) return NaN; var t=Math.log(v)/Math.LN10; return a.margin + (t-a.xMinT)/(a.xMaxT-a.xMinT)*(a.w-2*a.margin); }
+  return a.margin + (v-a.xMinT)/(a.xMaxT-a.xMinT)*(a.w-2*a.margin);
+}
+function axes_yScale(v){
+  var a=lastAxes; if(!a) return NaN; if(a.useLogY){ if(!(v>0)) return NaN; var t=Math.log(v)/Math.LN10; return a.h - a.margin - (t-a.yMinT)/(a.yMaxT-a.yMinT)*(a.h-2*a.margin); }
+  return a.h - a.margin - (v-a.yMinT)/(a.yMaxT-a.yMinT)*(a.h-2*a.margin);
+}
+function pxToX(px){
+  var a=lastAxes; if(!a) return NaN; var t=a.xMinT + (px - a.margin)/(a.w-2*a.margin)*(a.xMaxT-a.xMinT);
+  return a.useLogX ? Math.pow(10, t) : t;
+}
+function pyToY(py){
+  var a=lastAxes; if(!a) return NaN; var t=a.yMinT + (a.h - a.margin - py)/(a.h-2*a.margin)*(a.yMaxT-a.yMinT);
+  return a.useLogY ? Math.pow(10, t) : t;
+}
+function lowerBound(arr, x){
+  var lo=0, hi=arr.length-1, mid;
+  if(arr.length===0) return -1;
+  if(x<arr[0]) return -1;
+  if(x>=arr[hi]) return hi;
+  while(lo<hi){
+    mid=(lo+hi+1)>>1;
+    if(arr[mid]<=x) lo=mid; else hi=mid-1;
+  }
+  return lo;
+}
+function yAtXFromSamples(lineX, lineY, x){
+  if(!lineX || !lineY || lineX.length!==lineY.length || !lineX.length) return NaN;
+  var lo = lowerBound(lineX, x), hi=lo+1;
+  if(lo<0) return lineY[0];
+  if(hi>=lineX.length) return lineY[lineX.length-1];
+  var x0=lineX[lo], x1=lineX[hi], y0=lineY[lo], y1=lineY[hi];
+  if(!(x1>x0)) return y0;
+  var t=(x - x0)/(x1 - x0);
+  return y0*(1-t)+y1*t;
+}
+function yAtXFromPoints(points, x){
+  var xi=[], yi=[];
+  for(var i=0;i<points.length;i++){
+    var p=points[i];
+    if(Number.isFinite(p.x) && Number.isFinite(p.eqY)){ xi.push(p.x); yi.push(p.eqY); }
+  }
+  if(!xi.length) return NaN;
+  var lo=lowerBound(xi, x), hi=lo+1;
+  if(lo<0) return yi[0];
+  if(hi>=xi.length) return yi[yi.length-1];
+  var x0=xi[lo], x1=xi[hi], y0=yi[lo], y1=yi[hi];
+  var t=(x-x0)/(x1-x0);
+  return y0*(1-t)+y1*t;
+}
+chartCanvas.addEventListener('mousemove', function(ev){
+  if(!lastAxes || !combosCache) { lastHover=null; scheduleUpdate('redraw'); return; }
+  var rect=chartCanvas.getBoundingClientRect();
+  var px=ev.clientX - rect.left, py=ev.clientY - rect.top;
+  var a=lastAxes;
+  if(px<a.margin || px>a.w-a.margin || py<a.margin || py>a.h-a.margin){
+    lastHover=null; scheduleUpdate('redraw'); return;
+  }
+  var x=pxToX(px);
+  var best=null, bestDist=1e9;
+  for(var key in combosCache){
+    var c=combosCache[key];
+    var yCur;
+    if(c.lineX && c.lineY && c.lineX.length===c.lineY.length && c.lineX.length>0){
+      yCur = yAtXFromSamples(c.lineX, c.lineY, x);
+    }else{
+      yCur = yAtXFromPoints(c.points, x);
+    }
+    if(!Number.isFinite(yCur)) continue;
+    var sx=axes_xScale(x), sy=axes_yScale(yCur);
+    if(!Number.isFinite(sx)||!Number.isFinite(sy)) continue;
+    var dx=sx - px, dy=sy - py, d=dx*dx + dy*dy;
+    if(d<bestDist){ bestDist=d; best={ key:key, x:x, y:yCur, px:sx, py:sy, color:c.color, label:c.label, clientX:ev.clientX, clientY:ev.clientY }; }
+  }
+  var threshold=18*18;
+  if(best && bestDist<=threshold){
+    lastHover=best; scheduleUpdate('hover');
+  }else{
+    lastHover=null; scheduleUpdate('hover');
+  }
+});
+chartCanvas.addEventListener('mouseleave', function(){
+  lastHover=null; scheduleUpdate('hover');
+});
+
+/* ==== 評估 ==== */
+function getFilteredRowIdxs(){
+  if(!csvRows.length) return new Uint32Array(0);
+  var vars=colNames.filter(function(v){return v!==xVar;}).slice(0,2);
+  var arr=[], ri,row,pass,j,fv,sel;
+  for(ri=0; ri<csvRows.length; ri++){
+    row=csvRows[ri]; pass=true;
+    for(j=0;j<vars.length;j++){ fv=vars[j]; sel=filterSelections[fv]; if(sel){ if(sel.size===0){ pass=false; break; } if(!sel.has(row[fv])){ pass=false; break; } } }
+    if(pass) arr.push(ri);
+  }
+  if(arr.length===0){ var all=new Uint32Array(csvRows.length); for(var i=0;i<csvRows.length;i++) all[i]=i; return all; }
+  var out=new Uint32Array(arr.length); for(var k=0;k<arr.length;k++) out[k]=arr[k]; return out;
+}
+function requestEvaluate(){
+  ensureWorker();
+  var idxs=getFilteredRowIdxs(); pendingEvalIdx=idxs;
+  if(!compiledReady || needsCompile){
+    worker.postMessage({ cmd:'compile', assignments:assignments, eq:(eqAssign?eqAssign.expr:""), params:params, colNames:colNames });
+    return;
+  }
+  doPendingEval();
+}
+function doPendingEval(){
+  if(!pendingEvalIdx) return;
+  var transfers=[pendingEvalIdx.buffer];
+  worker.postMessage({ cmd:'evalIdx', idxArr:pendingEvalIdx, params:params }, transfers);
+  pendingEvalIdx=null;
+}
+
+/* ==== 穩定樣本抽取 ==== */
+function stableSampleIdx(allIdx, cap, seed){
+  if(!allIdx || allIdx.length<=cap) return allIdx;
+  var out=new Uint32Array(cap);
+  var s=(seed>>>0)||1;
+  function rnd(){ s=(1664525*s + 1013904223)>>>0; return (s>>>0)/4294967296; }
+  for(var i=0;i<cap;i++){ out[i]=allIdx[Math.floor(rnd()*allIdx.length)]; }
+  return out;
+}
+
+/* ==== 自動調參（主執行緒） ==== */
+function showTuneStatus(txt){ tuneStatus.style.display='inline-flex'; tuneText.textContent=txt; }
+function setTuning(flag){ tuning=!!flag; autoTuneBtn.disabled=tuning; tuneStartBtn.disabled=tuning; tuneCancelBtn.disabled=!tuning; linWarmBtn.disabled=tuning; if(!tuning){ setTimeout(function(){ tuneStatus.style.display='none'; }, 200); } }
+function currentTargets(){
+  if(DIFF_MODE==='rel'){
+    return { ok: THRESH_OK_REL, warn: THRESH_WARN_REL };
+  }else{
+    return { ok: THRESH_OK_ABS, warn: THRESH_WARN_ABS };
+  }
+}
+function buildTuneKeysFiltered(){
+  // 只優化目前搜尋框篩到的參數，且未鎖定；搜尋為空＝全部未鎖定
+  return Object.keys(params).filter(function(k){ return matchesParamFilter(k) && !paramLocks[k]; });
+}
+function startAutotune(){
+  if(!csvRows.length || !eqAssign){ alert('請先載入 CSV 與 TXT（方程）'); return; }
+  ensureWorker();
+  var t = currentTargets();
+  var target = tgtWarn.checked ? t.warn : t.ok;
+  var timeBudget = parseInt(timeBudgetInput.value,10); if(!Number.isFinite(timeBudget) || timeBudget<100) timeBudget=800;
+  var allIdx = onlyFilteredChk.checked ? getFilteredRowIdxs() : null;
+  var cap = Math.max(32, parseInt(sampleCapInput.value,10)||1024);
+  var rowIdx = allIdx ? stableSampleIdx(allIdx, cap, parseInt(seedInput.value,10)||0) : null;
+  var bounds=paramBounds;
+  var annealSteps = Math.max(1, parseInt(annealStepsInput.value,10)||1);
+  var worstFrac = clamp((parseFloat(worstPctInput.value)||0)/100, 0, 0.9);
+  var spsaSteps = Math.max(0, parseInt(spsaStepsInput.value,10)||0);
+  var spsaA = parseFloat(spsaAInput.value)||0.1;
+  var spsaC = parseFloat(spsaCInput.value)||0.05;
+  var refineType = String(refineTypeSel.value||'nelder');
+  var seed = parseInt(seedInput.value,10)||0;
+  var seeds = Math.max(1, parseInt(seedCountInput.value,10)||12);
+  var tuneKeys = buildTuneKeysFiltered();
+
+  var transfers=[]; if(rowIdx) transfers.push(rowIdx.buffer);
+  setTuning(true); showTuneStatus('自動調參中… 1%');
+
+  worker.postMessage({
+    cmd:'autotune',
+    assignments:assignments,
+    eq:(eqAssign?eqAssign.expr:''),
+    params:params,
+    bounds:bounds,
+    colNames:colNames,
+    valueKey:valueKey,
+    rowIdx:rowIdx,
+    metric: (DIFF_MODE==='rel'?'rel':'abs'),
+    target:target,
+    tauWarn:(t.warn),
+    annealSteps:annealSteps,
+    worstFrac:worstFrac,
+    spsaSteps:spsaSteps,
+    spsaA:spsaA,
+    spsaC:spsaC,
+    refineType:refineType,
+    loss: (lossSel ? String(lossSel.value||'soft_l1') : 'soft_l1'),
+    globalMethod: (globalSel ? String(globalSel.value||'none') : 'none'),
+    cmaGen: Math.max(1, parseInt(cmaGenInput && cmaGenInput.value,10)||12),
+    cmaPop: Math.max(0, parseInt(cmaPopInput && cmaPopInput.value,10)||0),
+    cmaSigma0: Math.max(1e-9, parseFloat(cmaSigma0Input && cmaSigma0Input.value)||0.3),
+    timeBudgetMs:timeBudget,
+    seed:seed,
+    seeds:seeds,
+    tuneKeys:tuneKeys
+  }, transfers);
+}
+function cancelAutotune(){ if(!tuning) return; ensureWorker(); worker.postMessage({cmd:'autotuneCancel'}); }
+
+/* 線性初解（也僅限目前搜尋命中且未鎖定的參數） */
+linWarmBtn.addEventListener('click', function(){
+  if(!csvRows.length || !eqAssign){ alert('請先載入 CSV 與 TXT（方程）'); return; }
+  ensureWorker();
+  var allIdx = onlyFilteredChk.checked ? getFilteredRowIdxs() : null;
+  var cap = Math.max(32, parseInt(sampleCapInput.value,10)||1024);
+  var rowIdx = allIdx ? stableSampleIdx(allIdx, cap, parseInt(seedInput.value,10)||0) : null;
+  var transfers=[]; if(rowIdx) transfers.push(rowIdx.buffer);
+  setTuning(true); showTuneStatus('線性初解嘗試…');
+  var t = currentTargets();
+  var _tk = buildTuneKeysFiltered();
+  worker.postMessage({
+    cmd:'autotune',
+    assignments:assignments,
+    eq:(eqAssign?eqAssign.expr:''),
+    params:params,
+    bounds:paramBounds,
+    colNames:colNames,
+    valueKey:valueKey,
+    rowIdx:rowIdx,
+    metric:(DIFF_MODE==='rel'?'rel':'abs'),
+    target:t.ok,
+    tauWarn:t.warn,
+    annealSteps:1,
+    worstFrac:0,
+    spsaSteps:0,
+    spsaA:0.1,
+    spsaC:0.05,
+    refineType:(_tk.length===1?'none':'none'),
+    timeBudgetMs:(_tk.length===1?600:600),
+    seed:parseInt(seedInput.value,10)||0,
+    seeds:5,
+    tuneKeys:_tk
+  }, transfers);
+});
+
+/* 以搜尋結果批次鎖定/解鎖（搜尋為空＝全部） */
+if(lockFilteredBtn) lockFilteredBtn.addEventListener('click', function(){
+  var ks=Object.keys(params);
+  for(var i=0;i<ks.length;i++){ var k=ks[i]; if(matchesParamFilter(k)) paramLocks[k]=true; }
+  buildParamControls();
+});
+if(unlockFilteredBtn) unlockFilteredBtn.addEventListener('click', function(){
+  var ks=Object.keys(params);
+  for(var i=0;i<ks.length;i++){ var k=ks[i]; if(matchesParamFilter(k)) paramLocks[k]=false; }
+  buildParamControls();
+});
+
+/* 搜尋欄事件 */
+if(paramSearchInput){
+  paramSearchInput.addEventListener('input', function(){
+    paramFilterQuery = paramSearchInput.value.trim();
+    updateParamFilterEcho();
+    buildParamControls();
+  });
+}
+
+/* ==== 檔案與按鈕 ==== */
+document.getElementById('csvFile').addEventListener('change', function(e){
+  var file=e.target.files[0]; if(!file) return; var reader=new FileReader();
+  reader.onload=function(ev){
+    try{
+      csvRows=parseCSV(String(ev.target.result)); if(!csvRows.length){ showError('CSV 檔案無有效資料列'); return; }
+      populateXSelect(); buildFilters(); buildParamControls();
+      var colsObj={}, transfers=[];
+      for(var i=0;i<colNames.length;i++){ var name=colNames[i]; var arr=new Float64Array(csvRows.length); for(var r=0;r<csvRows.length;r++) arr[r]=Number(csvRows[r][name]); colsObj[name]=arr; transfers.push(arr.buffer); }
+      var valArr=new Float64Array(csvRows.length); for(var r2=0;r2<csvRows.length;r2++) valArr[r2]=Number(csvRows[r2][valueKey]); colsObj[valueKey]=valArr; transfers.push(valArr.buffer);
+      ensureWorker(); worker.postMessage({ cmd:'load', cols:colsObj, rowCount:csvRows.length }, transfers);
+      ensureEqCache(); compiledReady=false; needsCompile=true;
+      requestEvaluate(); scheduleUpdate('csv');
+      updateExportText();
+    }catch(err){ showError('CSV 解析錯誤：'+String(err)); }
+  }; reader.readAsText(file);
+});
+document.getElementById('txtFile').addEventListener('change', function(e){
+  var file=e.target.files[0]; if(!file) return; var reader=new FileReader();
+  reader.onload=function(ev){
+    try{
+      parseTXT(String(ev.target.result));
+      equationInput.value = assignments.map(function(a){return a.var+' = '+a.expr;}).join('\n') + (eqAssign? '\neq = '+eqAssign.expr : '');
+      buildParamControls(); compiledReady=false; needsCompile=true; requestEvaluate(); scheduleUpdate('txt');
+      updateExportText();
+    }catch(err){ showError('TXT 解析錯誤：'+String(err)); }
+  }; reader.readAsText(file);
+});
+document.getElementById('applyEquation').addEventListener('click', function(){
+  try{
+    var lines=equationInput.value.split(/\n+/); assignments=[]; eqAssign=null;
+    for(var i=0;i<lines.length;i++){
+      var line=lines[i].trim(); if(!line) continue;
+      var idx=line.indexOf('='); if(idx<0){ continue; }
+      var pre=line.slice(0,idx).trim(); var expr=line.slice(idx+1).trim();
+      if(pre.charAt(0)==='#') continue;
+      var key=sanitizeName(pre); if(key==='eq') eqAssign={ "var":"eq", "expr":expr }; else assignments.push({ "var":key, "expr":expr });
+    }
+    compiledReady=false; needsCompile=true; requestEvaluate(); scheduleUpdate('applyEq');
+  }catch(err){ alert('方程式解析錯誤：'+String(err)); }
+});
+resetParamsBtn.addEventListener('click', function(){
+  params={}; var keys=Object.keys(initParams); for(var i=0;i<keys.length;i++){ params[keys[i]]=initParams[keys[i]]; }
+  buildParamControls(); requestEvaluate(); scheduleUpdate('reset');
+  updateExportText();
+});
+document.getElementById('exampleB').addEventListener('click', function(){ loadExample(exampleBData, exampleBEq, 'exampleB'); });
+logXChk.addEventListener('change', function(){ scheduleUpdate('axislog'); });
+logYChk.addEventListener('change', function(){ scheduleUpdate('axislog'); });
+realSampleChk.addEventListener('change', function(){ scheduleUpdate('sampling'); });
+autoTuneBtn.addEventListener('click', startAutotune);
+tuneStartBtn.addEventListener('click', startAutotune);
+tuneCancelBtn.addEventListener('click', cancelAutotune);
+
+function loadExample(csvText, txtText, reason){
+  csvRows=parseCSV(csvText); parseTXT(txtText);
+  equationInput.value = assignments.map(function(a){return a.var+' = '+a.expr;}).join('\n') + (eqAssign? '\neq = '+eqAssign.expr : '');
+  populateXSelect(); buildFilters(); buildParamControls();
+  var colsObj={}, transfers=[];
+  for(var i=0;i<colNames.length;i++){ var name=colNames[i]; var arr=new Float64Array(csvRows.length); for(var r=0;r<csvRows.length;r++) arr[r]=Number(csvRows[r][name]); colsObj[name]=arr; transfers.push(arr.buffer); }
+  var valArr=new Float64Array(csvRows.length); for(var r2=0;r2<csvRows.length;r2++) valArr[r2]=Number(csvRows[r2][valueKey]); colsObj[valueKey]=valArr; transfers.push(valArr.buffer);
+  ensureWorker(); worker.postMessage({ cmd:'load', cols:colsObj, rowCount:csvRows.length }, transfers);
+  ensureEqCache(); compiledReady=false; needsCompile=true;
+  requestEvaluate(); combosCache=null; scheduleUpdate('example');
+  updateExportText();
+}
+
+/* ==== 參數匯出：產生文字、複製、事件繫結 ==== */
+function paramsAsLines(){
+  var ks=Object.keys(params).sort();
+  var out=[]; for(var i=0;i<ks.length;i++){ var k=ks[i]; out.push(k+' = '+numToTight(params[k])); }
+  return out.join('\n');
+}
+function paramsAsTXTBlock(){
+  return '[PARAMS]\n' + paramsAsLines();
+}
+function paramsAsJSON(){
+  var ks=Object.keys(params).sort(); var o={};
+  for(var i=0;i<ks.length;i++){ var k=ks[i]; o[k]=Number(params[k]); }
+  return JSON.stringify(o, null, 2);
+}
+function currentExportFormat(){ if(fmtJSON && fmtJSON.checked) return 'json'; if(fmtLines && fmtLines.checked) return 'lines'; return 'txt'; }
+function updateExportText(){
+  var fmt=currentExportFormat();
+  if(fmt==='json') exportText.value=paramsAsJSON();
+  else if(fmt==='lines') exportText.value=paramsAsLines();
+  else exportText.value=paramsAsTXTBlock();
+}
+if(fmtTXT) fmtTXT.addEventListener('change', updateExportText);
+if(fmtLines) fmtLines.addEventListener('change', updateExportText);
+if(fmtJSON) fmtJSON.addEventListener('change', updateExportText);
+if(refreshExportBtn) refreshExportBtn.addEventListener('click', updateExportText);
+if(copyExportBtn) copyExportBtn.addEventListener('click', function(){
+  try{
+    exportText.select(); exportText.setSelectionRange(0, exportText.value.length);
+    var ok=document.execCommand('copy');
+    if(!ok && navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(exportText.value); }
+  }catch(e){}
+});
+
+/* ==== 測試 ==== */
+function runTests(){
+  testPanel.style.display='block';
+  testBody.innerHTML='<div>執行內建測試中…</div>';
+  testBadge.textContent='執行中…';
+  var results={};
+  (function(){ try{ parseTXT(exampleAEq); var ok1=!!eqAssign && eqAssign.var==='eq'; var ok2=('a' in params)&&('b' in params)&&('c' in params); results.parseTXT=ok1&&ok2; }catch(e){ results.parseTXT=false; } })();
+  (function(){ try{ var rows=parseCSV(exampleBData); results.parseCSV=(rows.length===2); }catch(e){ results.parseCSV=false; } })();
+  ensureWorker(); worker.postMessage({ cmd:'selftest' }); testPanel._pre=results;
+}
+function showTests(workerRes){
+  var res=testPanel._pre||{}; res.basic=!!workerRes.basic; res.lineLen=!!workerRes.lineLen; res.parenError=!!workerRes.parenError; res.assignHelper=!!workerRes.assignHelper; res.noUseStrict=!!workerRes.noUseStrict;
+  var items=[
+    {k:'parseTXT', name:'parseTXT：可解析 eqAssign；[PARAMS] 含 a,b,c'},
+    {k:'parseCSV', name:'parseCSV：示例 B 有 2 列'},
+    {k:'basic', name:'Worker 基本正確性：eqY=[3.1,3.2]'},
+    {k:'lineLen', name:'Worker 連續曲線：lines.length=1 且長度=3'},
+    {k:'parenError', name:'Worker 括號錯誤：不平衡括號回報 {error}'},
+    {k:'assignHelper', name:'Worker 前置 + helper：在 v1=0.1,v2=0 回 0.11'},
+    {k:'noUseStrict', name:'回歸測試：移除 "use strict" 仍可編譯'}
+  ];
+  var okAll=true, okCnt=0, html='';
+  for(var i=0;i<items.length;i++){ var it=items[i]; var ok=!!res[it.k]; if(!ok) okAll=false; else okCnt++; html+='<div>'+(ok?'<span class="ok">✔</span>':'<span class="fail">✘</span>')+' '+it.name+'</div>'; }
+  testBody.innerHTML=html; testBadge.textContent=(okAll?'全數通過 ':'部分通過 ')+okCnt+'/'+items.length; testDetails.open=false;
+}
+
+/* ==== 啟動 ==== */
+function init(){
+  updateControlsHeightVar(); resizeCanvas(); syncThresholdInputs();
+  loadExample(exampleBData, exampleBEq, 'exampleB');
+  setTimeout(runTests, 300);
+  exportDetails.open=false;
+  updateExportText();
+  updateParamFilterEcho();
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+</script>
+</body>
+</html>
