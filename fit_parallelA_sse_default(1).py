@@ -18,7 +18,7 @@ opt1_twostage.py — IPOPT/CasADi implementation that mirrors fit_modified_final
 """
 
 from __future__ import annotations
-import os, sys, json, math, argparse, textwrap, random
+import os, sys, json, math, argparse, textwrap
 
 
 def _compute_sse(data_csv: str, fitted_csv: str) -> float | None:
@@ -596,10 +596,24 @@ class FitGlobalCasadi:
         return out
 
     def _init_theta(self) -> np.ndarray:
-        # simple robust init from small random values
-        rng = np.random.default_rng(self.config.seed)
-        scale = 0.1
-        return rng.normal(loc=0.0, scale=scale, size=self.n_g*self.P)
+        # deterministic zero-centered initialization to avoid seed dependence
+        return np.zeros(self.n_g*self.P, dtype=float)
+
+    def _deterministic_perturbations(self, count: int) -> List[np.ndarray]:
+        """Generate deterministic perturbations for multi-start restarts."""
+        if count <= 0:
+            return []
+        dim = self.n_g * self.P
+        base_scale = 0.1
+        phi = 0.5 * (math.sqrt(5.0) - 1.0)  # golden ratio conjugate for low correlation
+        perts: List[np.ndarray] = []
+        for idx in range(count):
+            seq = (np.arange(dim, dtype=float) + 0.5) * (phi * float(idx + 1))
+            vec = (seq - np.floor(seq)) - 0.5
+            norm = np.linalg.norm(vec) + 1e-12
+            scale = base_scale * (1.0 + idx // max(1, dim))
+            perts.append((vec / norm) * scale)
+        return perts
 
     # ----- helper to split/join theta -----
     def _theta_flat_to_dict(self, theta_flat: np.ndarray) -> Dict[float, np.ndarray]:
@@ -791,15 +805,15 @@ class FitGlobalCasadi:
         lbg = ca.DM.zeros(int(g_expr.shape[0]))  # all >= 0
         ubg = ca.DM.inf(int(g_expr.shape[0]))
 
-        # Multi-start
-        rng = np.random.default_rng(self.config.seed)
+        # Multi-start using deterministic perturbations (seed-independent)
+        perturbations = self._deterministic_perturbations(max(0, self.config.restarts - 1))
         best = None
         trials = []
         for r in range(max(1, self.config.restarts)):
             if r == 0:
                 x0 = ca.DM(self.theta0)
             else:
-                perturb = rng.normal(0.0, 0.1, size=self.n_g*self.P)
+                perturb = perturbations[min(r - 1, len(perturbations) - 1)] if perturbations else np.zeros_like(self.theta0)
                 x0 = ca.DM(self.theta0 + perturb)
 
             # Stage 1
